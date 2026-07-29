@@ -62,6 +62,24 @@ export function RunForm({ models, busy, prefill, onPrefillUsed, onStart, onCance
   // stays an upper bound either way.
   const estimate = selected ? estimateRunCost(selected, turnBudget) : 0
 
+  /**
+   * The picker replaces its own selection every time it is opened, so attaching is additive here and
+   * the element's value is cleared afterwards — otherwise a file that was removed from the list
+   * could never be re-picked, the browser seeing no change to report.
+   */
+  const attachReferences = (picked: FileList | null) => {
+    const files = Array.from(picked ?? [])
+    setReferences((prev) => [
+      ...prev,
+      ...files.filter((f) => !prev.some((p) => p.name === f.name && p.size === f.size)),
+    ])
+    if (fileInput.current) fileInput.current.value = ''
+  }
+
+  const removeReference = (index: number) => {
+    setReferences((prev) => prev.filter((_, i) => i !== index))
+  }
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!canStart) return
@@ -216,14 +234,16 @@ export function RunForm({ models, busy, prefill, onPrefillUsed, onStart, onCance
         </Field>
       </fieldset>
 
-      <fieldset className="space-y-2" disabled={busy}>
+      {/* `min-w-0`: a fieldset's default min-width is min-content, so a long file name below would
+          otherwise widen the whole column rather than ellipsing. */}
+      <fieldset className="min-w-0 space-y-2" disabled={busy}>
         <legend className="eyebrow mb-2">Reference</legend>
         <input
           ref={fileInput}
           type="file"
           accept="image/*"
           multiple
-          onChange={(e) => setReferences(Array.from(e.target.files ?? []))}
+          onChange={(e) => attachReferences(e.target.files)}
           className="hidden"
         />
         <button
@@ -233,13 +253,25 @@ export function RunForm({ models, busy, prefill, onPrefillUsed, onStart, onCance
         >
           {references.length === 0
             ? 'Attach reference images'
-            : `${references.length} image${references.length === 1 ? '' : 's'} attached`}
+            : `${references.length} image${references.length === 1 ? '' : 's'} attached — add more`}
         </button>
         {references.length > 0 && (
           <ul className="space-y-1">
-            {references.map((file) => (
-              <li key={file.name} className="truncate font-mono text-[10px] text-muted">
-                {file.name}
+            {references.map((file, i) => (
+              <li
+                key={`${file.name}:${file.size}`}
+                className="flex min-w-0 items-center gap-2 font-mono text-[10px] text-muted"
+              >
+                <span className="min-w-0 truncate">{file.name}</span>
+                <button
+                  type="button"
+                  onClick={() => removeReference(i)}
+                  title={`Remove ${file.name}`}
+                  aria-label={`Remove ${file.name}`}
+                  className="ml-auto shrink-0 px-1 leading-none text-muted hover:text-coral"
+                >
+                  ✕
+                </button>
               </li>
             ))}
           </ul>

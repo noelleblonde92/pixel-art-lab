@@ -53,15 +53,11 @@ export function SettingsPane({ settings, onChange }: Props) {
               type="checkbox"
               checked={settings.autoSaveFinal}
               onChange={(e) => onChange({ autoSaveFinal: e.target.checked })}
-              className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-coral p-0"
+              className="h-3.5 w-3.5 shrink-0 accent-coral p-0"
             />
             <span className="space-y-1">
               <span className="block font-mono text-xs text-bright">
-                Save finished runs to the gallery
-              </span>
-              <span className="block font-mono text-[10px] leading-relaxed text-muted">
-                Keeps each run's final image without being asked. Run workspaces are pruned, so a
-                result nobody saved is eventually gone.
+                Automatically save runs to gallery
               </span>
             </span>
           </label>

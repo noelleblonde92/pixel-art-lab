@@ -121,6 +121,15 @@ function budgetDirective(limits: RunLimits, hasVision: boolean): string {
       `Do not spend your whole budget on a palette.`,
   ]
 
+  // The counts above are the only ones a blind model gets; a model with previews is told where the
+  // live ones are, because a stated total it cannot check is what it would otherwise pace against.
+  if (hasVision) {
+    lines.push(
+      `Every \`render_preview\` result carries a \`budget\` line with what is actually left. Read ` +
+        `it and pace against it — it is current, and these opening numbers are not.`,
+    )
+  }
+
   if (hasVision && limits.maxIterations !== undefined) {
     lines.push(
       `You may call \`render_preview\` at most ${limits.maxIterations} times — the run ends there, ` +

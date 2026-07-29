@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isEmptyResponse, resolveLimits } from './loop.js'
+import { budgetStatus, isEmptyResponse, resolveLimits } from './loop.js'
 import { config } from '../config.js'
 
 const request = (over: Record<string, unknown> = {}) => ({
@@ -43,6 +43,36 @@ describe('resolveLimits', () => {
       maxIterations: undefined,
       maxCostUsd: undefined,
     })
+  })
+})
+
+describe('budgetStatus', () => {
+  const spent = { turns: 7, iterations: 3, cost: 0.0123 }
+
+  it('reports every budget the run actually has', () => {
+    expect(budgetStatus(spent, { maxTurns: 20, maxIterations: 8, maxCostUsd: 0.05 })).toBe(
+      'Turn 7 of 20 (13 left). Preview iteration 3 of 8 (5 left). Spent $0.0123 of the $0.0500 limit.',
+    )
+  })
+
+  // The opt-in budgets are left unmentioned rather than reported as unlimited: naming a cap the run
+  // does not have is what `budgetDirective` avoids in the prompt, for the same reason.
+  it('names only the turn budget when the others were left blank', () => {
+    expect(budgetStatus(spent, { maxTurns: 20 })).toBe('Turn 7 of 20 (13 left).')
+  })
+
+  it('reports the last turn and the last preview as zero left', () => {
+    expect(budgetStatus({ turns: 20, iterations: 8, cost: 0 }, { maxTurns: 20, maxIterations: 8 })).toBe(
+      'Turn 20 of 20 (0 left). Preview iteration 8 of 8 (0 left).',
+    )
+  })
+
+  // A run can end past its cost limit — the check is between turns — and "-1 left" would read as a
+  // budget the model could still spend against.
+  it('never reports a negative remainder', () => {
+    expect(budgetStatus({ turns: 3, iterations: 9, cost: 0 }, { maxTurns: 20, maxIterations: 8 })).toContain(
+      'Preview iteration 9 of 8 (0 left).',
+    )
   })
 })
 

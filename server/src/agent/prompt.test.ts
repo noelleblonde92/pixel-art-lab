@@ -38,6 +38,13 @@ describe('buildSystemPrompt', () => {
     expect(build(false, { limits })).not.toContain('at most 6 times')
   })
 
+  // The prompt's own totals are a starting position, not a running count; the preview result is the
+  // only place the model can read what is actually left, so a model with previews is sent there.
+  it('points a vision model at the live budget on preview results', () => {
+    expect(build(true)).toContain('`budget` line')
+    expect(build(false)).not.toContain('`budget` line')
+  })
+
   it('still states the cost cap to a blind model, which can reach it', () => {
     const limits = { maxTurns: 40, maxCostUsd: 0.5 }
     expect(build(false, { limits })).toContain('$0.50')

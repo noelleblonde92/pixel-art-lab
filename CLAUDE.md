@@ -128,8 +128,12 @@ the run is `config.emptyResponseLimit` blanks **consecutively** — `state.empty
 any turn that carries something, because blanks scattered across a long run are hiccups the retry
 already recovered from, not an endpoint that stopped answering. Each retry waits first
 (`config.emptyResponseDelaysMs`, indexed by the streak), since re-asking instantly tends to land in
-the same transient state that produced the blank. Otherwise the run ends at whichever budget lands
-first.
+the same transient state that produced the blank. The retry loop sits **inside** the turn, and
+`state.turns` is only advanced once a response actually arrives: a provider that drops a response is
+not the model spending a turn, and billing the retries to the turn budget would silently shorten the
+run the form asked for. So the attempts all report under one `turn.start` (its `n` is the turn the
+answer will become), and their `usage` events still land, because every attempt is really charged.
+Otherwise the run ends at whichever budget lands first.
 `resolveLimits` reads all three off the form: `maxTurns` (defaulted from `defaultMaxTurns`, capped by
 `turnCeiling`) plus the two opt-in ones, `maxIterations` and `maxCostUsd` — blank there means *no cap
 of that kind* rather than a default, so a budget is always deliberate and two runs that asked for
@@ -138,6 +142,15 @@ none stay comparable. `toolCallCeiling` is an independent guard on top.
 Budgets are checked **between turns**, never mid-turn, so a turn's edits all land together. Hitting
 the turn or iteration limit buys one final tools-less turn to sign off; hitting the cost limit does
 not, because that turn would spend past the number the limit named.
+
+What the model knows of all this is one `budget` line (`budgetStatus`) appended to every successful
+`render_preview` result — the system prompt states the totals once and then goes stale, and the
+model cannot recover the count from its own history because pruning rewrites it. Previews carry it
+because the look-and-fix cycle is the thing being paced, and because a per-turn reminder would move
+the rolling cache breakpoint every turn (see "Prompt caching"). Only caps the run actually has are
+named, for the same reason `budgetDirective` omits them. A failed render gets no line and is not an
+iteration; the line is built *after* the tally and *before* the `tool.result` event, so the
+transcript shows what the model read.
 
 ### Sandboxing (`server/src/mcp/paths.ts`)
 

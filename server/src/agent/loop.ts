@@ -63,6 +63,36 @@ export function resolveLimits(request: RunRequest): RunLimits {
   }
 }
 
+/**
+ * The budget as the model sees it, reported on every preview result.
+ *
+ * The system prompt states the totals once and then goes stale: a model twelve turns in knows it
+ * started with twenty and has no way to count what it has spent, because pruning rewrites the
+ * history it would have to count. Previews are where that matters — the look-and-fix cycle is what
+ * the model paces, so the answer rides along with the image rather than costing a message of its
+ * own. Only caps that are real are named, for the same reason `budgetDirective` omits them: a model
+ * told about a limit it cannot hit paces itself against a fiction.
+ */
+export function budgetStatus(
+  spent: { turns: number; iterations: number; cost: number },
+  limits: RunLimits,
+): string {
+  const parts = [
+    `Turn ${spent.turns} of ${limits.maxTurns} (${Math.max(0, limits.maxTurns - spent.turns)} left).`,
+  ]
+
+  if (limits.maxIterations !== undefined) {
+    const left = Math.max(0, limits.maxIterations - spent.iterations)
+    parts.push(`Preview iteration ${spent.iterations} of ${limits.maxIterations} (${left} left).`)
+  }
+
+  if (limits.maxCostUsd !== undefined) {
+    parts.push(`Spent $${spent.cost.toFixed(4)} of the $${limits.maxCostUsd.toFixed(4)} limit.`)
+  }
+
+  return parts.join(' ')
+}
+
 interface PendingPreview {
   parts: ContentPart[]
   placeholder: string
@@ -203,19 +233,32 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
         if (resolvedName === 'render_preview') {
           state.previewSeq++
           const res = await renderPreview(mcp, sandboxed, runDir, state.previewSeq)
+
+          // A render the model never got an image back from is not a look at its work: it is not an
+          // iteration, and it carries no budget line, because the count it quoted would be wrong.
+          const looked = res.ok && res.image !== undefined
+          if (looked) {
+            state.sawPreview = true
+            state.iterations++
+          }
+
+          // Tallied before the line is built so it counts this preview, and emitted after so the
+          // transcript records the result the model actually read.
+          const result = looked
+            ? { ...(res.result as Record<string, unknown>), budget: budgetStatus(state, limits) }
+            : res.result
+
           emit({
             t: 'tool.result',
             id: call.id,
             name: resolvedName,
             ok: res.ok,
-            result: res.result,
+            result,
             ms: Date.now() - started,
           })
 
-          if (!res.ok || !res.image) return { result: res.result }
+          if (!res.ok || !res.image) return { result }
 
-          state.sawPreview = true
-          state.iterations++
           const rel = toWorkspaceRelative(res.image.spritePath, runDir)
           state.lastSprite = rel
           const dims = `${res.image.sourceWidth}x${res.image.sourceHeight} shown at ${res.image.scale}x`
@@ -232,7 +275,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
           })
 
           return {
-            result: res.result,
+            result,
             preview: {
               parts: [
                 { type: 'text', text: `Preview of ${rel} (${dims}). Judge it and fix what is wrong.` },
@@ -280,63 +323,73 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
     while (state.turns < limits.maxTurns) {
       if (signal.aborted) return finish('cancelled')
 
-      state.turns++
-      emit({ t: 'turn.start', n: state.turns })
+      // The turn number is claimed only once a response actually arrives. A dropped response is
+      // retried in place, under this same number: the provider failing to answer is not the model
+      // spending a turn, and charging the retries to the turn budget would quietly shorten the run
+      // the form asked for.
+      const n = state.turns + 1
+      emit({ t: 'turn.start', n })
 
-      const turn = await runTurn(
-        {
-          model: model.id,
-          messages: history.toArray(cacheBreakpoints),
-          tools,
-          effort: request.reasoningEffort,
-          sendReasoning: model.supportsReasoning,
-          cacheBreakpoints,
-          signal,
-        },
-        {
-          onText: (text) => emit({ t: 'text.delta', text }),
-          onReasoning: (text) => emit({ t: 'reasoning.delta', text }),
-        },
-      )
+      let turn: TurnResult
+      for (;;) {
+        turn = await runTurn(
+          {
+            model: model.id,
+            messages: history.toArray(cacheBreakpoints),
+            tools,
+            effort: request.reasoningEffort,
+            sendReasoning: model.supportsReasoning,
+            cacheBreakpoints,
+            signal,
+          },
+          {
+            onText: (text) => emit({ t: 'text.delta', text }),
+            onReasoning: (text) => emit({ t: 'reasoning.delta', text }),
+          },
+        )
 
-      state.cost += turn.usage.cost
-      emit({
-        t: 'usage',
-        promptTokens: turn.usage.promptTokens,
-        completionTokens: turn.usage.completionTokens,
-        reasoningTokens: turn.usage.reasoningTokens,
-        cachedTokens: turn.usage.cachedTokens,
-        cacheWriteTokens: turn.usage.cacheWriteTokens,
-        cost: turn.usage.cost,
-        cumulativeCost: state.cost,
-      })
-      if (model.contextLength > 0) {
-        state.contextRatio = turn.usage.promptTokens / model.contextLength
-      }
-
-      // A response with nothing in it at all is a provider failure wearing the costume of a
-      // finished run: no tool calls is also how a model signals "done", so left alone it scores as
-      // a clean finish. Run e32b48be ended this way on a blank canvas. These are usually transient,
-      // so retry — and only call the endpoint dead once `emptyResponseLimit` land back to back,
-      // rather than claiming 'done'. The streak is what matters: two blanks twenty turns apart are
-      // two recovered hiccups, not a model that stopped answering.
-      if (isEmptyResponse(turn)) {
-        state.emptyStreak++
-        if (state.emptyStreak < config.emptyResponseLimit) {
-          const delays = config.emptyResponseDelaysMs
-          const wait = delays[Math.min(state.emptyStreak, delays.length) - 1]
-          emit({
-            t: 'warning',
-            message:
-              `Model returned an empty response (${state.emptyStreak} in a row); ` +
-              `retrying the turn in ${wait / 1000}s.`,
-          })
-          await sleep(wait, signal)
-          continue
+        // Every attempt is billed, so every attempt is accounted for — only the turn tally is spared.
+        state.cost += turn.usage.cost
+        emit({
+          t: 'usage',
+          promptTokens: turn.usage.promptTokens,
+          completionTokens: turn.usage.completionTokens,
+          reasoningTokens: turn.usage.reasoningTokens,
+          cachedTokens: turn.usage.cachedTokens,
+          cacheWriteTokens: turn.usage.cacheWriteTokens,
+          cost: turn.usage.cost,
+          cumulativeCost: state.cost,
+        })
+        if (model.contextLength > 0) {
+          state.contextRatio = turn.usage.promptTokens / model.contextLength
         }
-        state.message = `The model returned an empty response ${state.emptyStreak} times in a row.`
-        return finish('empty_response')
+
+        // A response with nothing in it at all is a provider failure wearing the costume of a
+        // finished run: no tool calls is also how a model signals "done", so left alone it scores as
+        // a clean finish. Run e32b48be ended this way on a blank canvas. These are usually transient,
+        // so retry — and only call the endpoint dead once `emptyResponseLimit` land back to back,
+        // rather than claiming 'done'. The streak is what matters: two blanks twenty turns apart are
+        // two recovered hiccups, not a model that stopped answering.
+        if (!isEmptyResponse(turn)) break
+
+        state.emptyStreak++
+        if (state.emptyStreak >= config.emptyResponseLimit) {
+          state.message = `The model returned an empty response ${state.emptyStreak} times in a row.`
+          return finish('empty_response')
+        }
+        const delays = config.emptyResponseDelaysMs
+        const wait = delays[Math.min(state.emptyStreak, delays.length) - 1]
+        emit({
+          t: 'warning',
+          message:
+            `Model returned an empty response (${state.emptyStreak} in a row); ` +
+            `retrying the turn in ${wait / 1000}s.`,
+        })
+        await sleep(wait, signal)
+        if (signal.aborted) return finish('cancelled')
       }
+
+      state.turns = n
       state.emptyStreak = 0
 
       // No tool calls means the model considers itself finished.
