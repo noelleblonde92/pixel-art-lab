@@ -7,6 +7,8 @@ through a tool-calling loop — the model draws, renders a preview, looks at it,
 
 OpenRouter is currently the only supported provider.
 
+![Pixel Art Lab mid-run: the prompt and budget form, the current preview with every earlier iteration beside it, and the transcript of the model's reasoning and tool calls](docs/screenshot.png)
+
 ## Requirements
 
 - Node 20+
