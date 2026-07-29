@@ -5,3 +5,4 @@ runs/
 *.log
 gallery/
 *.tsbuildinfo
+/pixel-mcp/

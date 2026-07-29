@@ -51,16 +51,23 @@ node server/scripts/smoke.mjs [model] [prompt]
 Check the MCP dependency is healthy before debugging a failing run:
 
 ```sh
-~/Apps/pixel-mcp/bin/pixel-mcp --health
+./pixel-mcp/bin/pixel-mcp --health   # or wherever PIXEL_MCP_BIN points
 ```
 
 ## Requirements
 
 Node 20+, Aseprite plus a built `pixel-mcp` binary with `~/.config/pixel-mcp/config.json` pointing at
-the Aseprite executable, and `OPENROUTER_API_KEY` exported. The key is read server-side only
+the Aseprite executable, and `OPENROUTER_API_KEY` set. The key is read server-side only
 (`server/src/config.ts`) and never reaches the browser — models are proxied through `/api/models` for
 that reason. All tunables (budget ceilings, preview sizing, context-pressure thresholds, timeouts)
 live in `config.ts`; prefer adding one there over hardcoding.
+
+Environment comes from `.env` at the repo root (`cp .env.example .env`), loaded by the server's own
+npm scripts via `--env-file-if-exists` — *if exists*, so a shell-exported key still works and a
+missing file fails as `assertConfigured`'s clear message rather than an ENOENT. Node's parser does no
+tilde expansion, so `~/...` in `.env` is a literal path; `PIXEL_MCP_BIN`, `RUNS_DIR` and `GALLERY_DIR`
+are each resolved against the project root, so a relative value there means what it looks like
+regardless of where the server was started from.
 
 ## Architecture
 

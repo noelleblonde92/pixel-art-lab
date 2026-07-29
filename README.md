@@ -13,17 +13,22 @@ OpenRouter is currently the only supported provider.
 - [`Aseprite`](https://github.com/aseprite/aseprite) 1.3.10+
 - [`pixel-mcp`](https://github.com/willibrandon/pixel-mcp)
   - Go 1.23+ (required by pixel-mcp)
-- Aseprite, and the `pixel-mcp` binary built and configured
-  (`~/.config/pixel-mcp/config.json` pointing at your Aseprite executable)
-- `OPENROUTER_API_KEY` in the environment
+
+Aseprite and pixel-mcp must be built and configured.
 
 Check the MCP server is healthy first:
 
 ```sh
-/home/nitechno/Apps/pixel-mcp/bin/pixel-mcp --health
+./pixel-mcp/bin/pixel-mcp --health
 ```
 
 ## Setup
+
+```sh
+cp .env.example .env
+```
+
+Set OPENROUTER_API_KEY and PIXEL_MCP_BIN values in .env file.
 
 ```sh
 npm install
@@ -39,7 +44,7 @@ Environment variables (all optional except the key):
 | Var | Default | Purpose |
 |---|---|---|
 | `OPENROUTER_API_KEY` | — | **Required.** Stays server-side; never sent to the browser. |
-| `PIXEL_MCP_BIN` | `~/Apps/pixel-mcp/bin/pixel-mcp` | Path to the MCP server binary |
+| `PIXEL_MCP_BIN` | `./pixel-mcp/bin/pixel-mcp` | Path to the MCP server binary |
 | `PORT` | `8787` | Backend port |
 | `RUNS_DIR` | `./runs` | Where run workspaces are written |
 | `GALLERY_DIR` | `./gallery` | Where saved benchmark results are kept |
@@ -86,3 +91,9 @@ web/src/      React UI
 runs/         per-run workspaces (gitignored)
 gallery/      saved results (gitignored)
 ```
+
+## Known Issues
+
+- Only tested on:
+  - Fedora Linux
+  - Github Aseprite build

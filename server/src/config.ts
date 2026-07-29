@@ -1,11 +1,10 @@
-import { homedir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const home = homedir()
-
 // Anchored to this file rather than cwd, so runs land in the project root whether the server is
-// started from the repo root, from server/, or from the built dist/.
+// started from the repo root, from server/, or from the built dist/. A relative path in the
+// environment is resolved against it too, so `RUNS_DIR=./runs` in .env means what it looks like
+// and does not quietly follow whichever directory the server happened to be started from.
 const projectRoot = fileURLToPath(new URL('../../', import.meta.url))
 
 export const config = {
@@ -15,15 +14,15 @@ export const config = {
   openRouterBase: 'https://openrouter.ai/api/v1',
 
   /** The pixel-mcp binary. Spawned once per run and spoken to over stdio. */
-  mcpBin: process.env.PIXEL_MCP_BIN ?? path.join(home, 'Apps/pixel-mcp/bin/pixel-mcp'),
+  mcpBin: path.resolve(projectRoot, process.env.PIXEL_MCP_BIN ?? 'pixel-mcp/bin/pixel-mcp'),
 
-  runsDir: path.resolve(process.env.RUNS_DIR ?? path.join(projectRoot, 'runs')),
+  runsDir: path.resolve(projectRoot, process.env.RUNS_DIR ?? 'runs'),
 
   /**
    * Saved benchmark results. Deliberately not under `runsDir`: a run workspace is disposable and
    * `pruneOldRuns` will delete it, so anything worth keeping is *copied* out to here.
    */
-  galleryDir: path.resolve(process.env.GALLERY_DIR ?? path.join(projectRoot, 'gallery')),
+  galleryDir: path.resolve(projectRoot, process.env.GALLERY_DIR ?? 'gallery'),
 
   /**
    * How many run workspaces `pruneOldRuns` keeps, newest first. Every start prunes, and the settings
