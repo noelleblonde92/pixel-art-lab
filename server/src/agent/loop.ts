@@ -1,0 +1,517 @@
+import path from 'node:path'
+import { config } from '../config.js'
+import type { ModelInfo, RunEndReason, RunEvent, RunRequest } from '../types.js'
+import { PixelMcp } from '../mcp/client.js'
+import { buildToolset, matchToolName } from '../mcp/toolset.js'
+import { PathViolation, sandboxArgs, toWorkspaceRelative } from '../mcp/paths.js'
+import { newSprite } from '../mcp/newSprite.js'
+import { drawPixels } from '../mcp/drawPixels.js'
+import { renderPreview } from '../mcp/preview.js'
+import { buildSystemPrompt } from './prompt.js'
+import { buildFirstUserMessage, History } from './history.js'
+import {
+  FatalOpenRouterError,
+  runTurn,
+  type ContentPart,
+  type ToolCallPayload,
+  type TurnResult,
+} from '../openrouter/stream.js'
+
+export interface AgentRunOptions {
+  runId: string
+  runDir: string
+  request: RunRequest
+  model: ModelInfo
+  referenceFiles: string[]
+  referenceDataUris: string[]
+  signal: AbortSignal
+  emit: (event: RunEvent) => void
+}
+
+export interface AgentOutcome {
+  reason: RunEndReason
+  turns: number
+  iterations: number
+  toolCalls: number
+  cost: number
+  finalSprite?: string
+  finalPng?: string
+  message?: string
+}
+
+/**
+ * What ends the run, other than the model saying it is done.
+ *
+ * `maxTurns` always has a value; the other two are opt-in, and blank on the form means "no cap of
+ * that kind" rather than a default, so that adding a budget is always a deliberate choice and two
+ * runs stay comparable when neither asked for one.
+ */
+export interface RunLimits {
+  maxTurns: number
+  maxIterations?: number
+  maxCostUsd?: number
+}
+
+export function resolveLimits(request: RunRequest): RunLimits {
+  const clamp = (value: number | undefined, ceiling: number): number | undefined =>
+    typeof value === 'number' && value > 0 ? Math.min(value, ceiling) : undefined
+
+  return {
+    maxTurns: clamp(request.maxTurns, config.turnCeiling) ?? config.defaultMaxTurns,
+    maxIterations: clamp(request.maxIterations, config.iterationCeiling),
+    maxCostUsd: clamp(request.maxCostUsd, config.costCeilingUsd),
+  }
+}
+
+interface PendingPreview {
+  parts: ContentPart[]
+  placeholder: string
+}
+
+interface CallOutcome {
+  result: unknown
+  preview?: PendingPreview
+}
+
+export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
+  const { runDir, request, model, signal, emit } = opts
+
+  const limits = resolveLimits(request)
+
+  const mcp = await PixelMcp.start(runDir)
+
+  const state = {
+    turns: 0,
+    /** Previews the model actually got to look at — a failed render is not a look at the work. */
+    iterations: 0,
+    toolCalls: 0,
+    previewSeq: 0,
+    cost: 0,
+    contextRatio: 0,
+    sawPreview: false,
+    /** The nudge below fires at most once, so a stubborn model cannot be looped forever. */
+    nudged: false,
+    /**
+     * Empty responses *in a row*. Any turn that carries something clears it, so a broken endpoint
+     * still cannot burn the budget while a run that hiccupped once an hour ago is not punished.
+     */
+    emptyStreak: 0,
+    lastSprite: undefined as string | undefined,
+    message: undefined as string | undefined,
+  }
+
+  const finish = (reason: RunEndReason): AgentOutcome => ({
+    reason,
+    turns: state.turns,
+    iterations: state.iterations,
+    toolCalls: state.toolCalls,
+    cost: state.cost,
+    finalSprite: state.lastSprite,
+    message: state.message,
+  })
+
+  try {
+    const mcpTools = await mcp.listTools()
+    const tools = buildToolset(mcpTools, request.toolset ?? 'core', model.supportsVision)
+    const toolNames = new Set(tools.map((t) => t.function.name))
+
+    emit({
+      t: 'run.start',
+      runId: opts.runId,
+      model: model.id,
+      maxTurns: limits.maxTurns,
+      maxIterations: limits.maxIterations,
+      maxCostUsd: limits.maxCostUsd,
+      toolCount: tools.length,
+    })
+
+    const system = buildSystemPrompt({
+      request,
+      limits,
+      referenceFiles: opts.referenceFiles.map((f) => toWorkspaceRelative(f, runDir)),
+      hasVision: model.supportsVision,
+    })
+
+    const history = new History(
+      system,
+      buildFirstUserMessage(request.prompt, opts.referenceDataUris, model.supportsVision),
+    )
+
+    // Models that cache automatically need nothing from us; the rest get breakpoints or pay full
+    // input price on every one of the run's round-trips.
+    const cacheBreakpoints = config.promptCaching && model.needsCacheBreakpoints
+
+    /** Run one tool call: resolve the name, sandbox its paths, dispatch, and report. */
+    const executeCall = async (call: ToolCallPayload): Promise<CallOutcome> => {
+      const started = Date.now()
+      const requested = call.function.name
+      const resolvedName = matchToolName(requested, toolNames)
+
+      let args: Record<string, unknown>
+      try {
+        args = call.function.arguments.trim()
+          ? (JSON.parse(call.function.arguments) as Record<string, unknown>)
+          : {}
+      } catch (err) {
+        // Malformed JSON is recoverable — tell the model what broke and let it retry.
+        const result = {
+          error: `Could not parse the arguments as JSON: ${String(err)}. Re-send this call with valid JSON.`,
+        }
+        emit({ t: 'tool.call', id: call.id, name: requested, args: call.function.arguments })
+        emit({ t: 'tool.result', id: call.id, name: requested, ok: false, result, ms: Date.now() - started })
+        return { result }
+      }
+
+      emit({ t: 'tool.call', id: call.id, name: resolvedName ?? requested, args })
+
+      if (!resolvedName) {
+        const result = {
+          error: `No such tool "${requested}". Available tools: ${[...toolNames].join(', ')}`,
+        }
+        emit({ t: 'tool.result', id: call.id, name: requested, ok: false, result, ms: Date.now() - started })
+        return { result }
+      }
+
+      let sandboxed: Record<string, unknown>
+      try {
+        sandboxed = await sandboxArgs(args, runDir)
+      } catch (err) {
+        // Path rejections become tool errors so the model self-corrects instead of the run dying.
+        const result = {
+          error: err instanceof PathViolation ? err.message : `Invalid path argument: ${String(err)}`,
+        }
+        emit({ t: 'tool.result', id: call.id, name: resolvedName, ok: false, result, ms: Date.now() - started })
+        return { result }
+      }
+
+      try {
+        if (resolvedName === 'new_sprite') {
+          const res = await newSprite(mcp, sandboxed, runDir)
+          const spritePath = (res.result as { sprite_path?: string }).sprite_path
+          if (res.ok && spritePath) state.lastSprite = spritePath
+          emit({
+            t: 'tool.result',
+            id: call.id,
+            name: resolvedName,
+            ok: res.ok,
+            result: res.result,
+            ms: Date.now() - started,
+          })
+          return { result: res.result }
+        }
+
+        if (resolvedName === 'render_preview') {
+          state.previewSeq++
+          const res = await renderPreview(mcp, sandboxed, runDir, state.previewSeq)
+          emit({
+            t: 'tool.result',
+            id: call.id,
+            name: resolvedName,
+            ok: res.ok,
+            result: res.result,
+            ms: Date.now() - started,
+          })
+
+          if (!res.ok || !res.image) return { result: res.result }
+
+          state.sawPreview = true
+          state.iterations++
+          const rel = toWorkspaceRelative(res.image.spritePath, runDir)
+          state.lastSprite = rel
+          const dims = `${res.image.sourceWidth}x${res.image.sourceHeight} shown at ${res.image.scale}x`
+
+          emit({
+            t: 'preview',
+            id: call.id,
+            url: `/api/runs/${opts.runId}/files/exports/${res.image.fileName}`,
+            spritePath: rel,
+            width: res.image.sourceWidth,
+            height: res.image.sourceHeight,
+            scale: res.image.scale,
+            note: res.image.note,
+          })
+
+          return {
+            result: res.result,
+            preview: {
+              parts: [
+                { type: 'text', text: `Preview of ${rel} (${dims}). Judge it and fix what is wrong.` },
+                { type: 'image_url', image_url: { url: res.image.dataUri } },
+              ],
+              placeholder: `[preview of ${rel} from iteration ${state.iterations} of turn ${state.turns} (${dims}) — image dropped to save context]`,
+            },
+          }
+        }
+
+        // draw_pixels is wrapped rather than forwarded: it addresses the cel rather than the canvas
+        // and drops whatever falls outside it while still reporting success. See mcp/drawPixels.ts.
+        const res = await (resolvedName === 'draw_pixels'
+          ? drawPixels(mcp, sandboxed)
+          : mcp.callTool(resolvedName, sandboxed).then((r) => ({
+              ok: r.ok,
+              result: r.ok ? safeParse(r.text) : { error: r.text },
+            })))
+        const result = res.result
+
+        if (res.ok && typeof sandboxed.sprite_path === 'string') {
+          state.lastSprite = toWorkspaceRelative(sandboxed.sprite_path, runDir)
+        }
+
+        emit({
+          t: 'tool.result',
+          id: call.id,
+          name: resolvedName,
+          ok: res.ok,
+          result,
+          ms: Date.now() - started,
+        })
+        return { result }
+      } catch (err) {
+        const result = { error: `Tool call failed: ${String(err)}` }
+        emit({ t: 'tool.result', id: call.id, name: resolvedName, ok: false, result, ms: Date.now() - started })
+        return { result }
+      }
+    }
+
+    // Why the loop ended, once it has. Turns are the only limit that can expire before a turn runs,
+    // so they are the standing answer; the budgets below overwrite it when one of them lands first.
+    let exhausted: RunEndReason = 'max_turns'
+
+    while (state.turns < limits.maxTurns) {
+      if (signal.aborted) return finish('cancelled')
+
+      state.turns++
+      emit({ t: 'turn.start', n: state.turns })
+
+      const turn = await runTurn(
+        {
+          model: model.id,
+          messages: history.toArray(cacheBreakpoints),
+          tools,
+          effort: request.reasoningEffort,
+          sendReasoning: model.supportsReasoning,
+          cacheBreakpoints,
+          signal,
+        },
+        {
+          onText: (text) => emit({ t: 'text.delta', text }),
+          onReasoning: (text) => emit({ t: 'reasoning.delta', text }),
+        },
+      )
+
+      state.cost += turn.usage.cost
+      emit({
+        t: 'usage',
+        promptTokens: turn.usage.promptTokens,
+        completionTokens: turn.usage.completionTokens,
+        reasoningTokens: turn.usage.reasoningTokens,
+        cachedTokens: turn.usage.cachedTokens,
+        cacheWriteTokens: turn.usage.cacheWriteTokens,
+        cost: turn.usage.cost,
+        cumulativeCost: state.cost,
+      })
+      if (model.contextLength > 0) {
+        state.contextRatio = turn.usage.promptTokens / model.contextLength
+      }
+
+      // A response with nothing in it at all is a provider failure wearing the costume of a
+      // finished run: no tool calls is also how a model signals "done", so left alone it scores as
+      // a clean finish. Run e32b48be ended this way on a blank canvas. These are usually transient,
+      // so retry — and only call the endpoint dead once `emptyResponseLimit` land back to back,
+      // rather than claiming 'done'. The streak is what matters: two blanks twenty turns apart are
+      // two recovered hiccups, not a model that stopped answering.
+      if (isEmptyResponse(turn)) {
+        state.emptyStreak++
+        if (state.emptyStreak < config.emptyResponseLimit) {
+          const delays = config.emptyResponseDelaysMs
+          const wait = delays[Math.min(state.emptyStreak, delays.length) - 1]
+          emit({
+            t: 'warning',
+            message:
+              `Model returned an empty response (${state.emptyStreak} in a row); ` +
+              `retrying the turn in ${wait / 1000}s.`,
+          })
+          await sleep(wait, signal)
+          continue
+        }
+        state.message = `The model returned an empty response ${state.emptyStreak} times in a row.`
+        return finish('empty_response')
+      }
+      state.emptyStreak = 0
+
+      // No tool calls means the model considers itself finished.
+      if (turn.toolCalls.length === 0) {
+        if (!state.sawPreview && !state.nudged && model.supportsVision) {
+          state.nudged = true
+          history.push({ role: 'assistant', content: turn.text || '' })
+          history.push({
+            role: 'user',
+            content:
+              'You have not looked at your work yet. Call render_preview on your sprite, judge what ' +
+              'you see honestly — silhouette, value separation, stray pixels — then fix anything ' +
+              'wrong before finishing.',
+          })
+          emit({ t: 'warning', message: 'Model tried to finish without previewing; nudged once.' })
+          continue
+        }
+        state.message = turn.text.trim() || undefined
+        return finish('done')
+      }
+
+      history.push({ role: 'assistant', content: turn.text || null, tool_calls: turn.toolCalls })
+
+      // Strictly sequential: pixel-mcp gives no concurrency guarantees on a single file, and a model
+      // can happily emit two calls that mutate the same sprite in one turn.
+      const pendingPreviews: PendingPreview[] = []
+
+      for (const call of turn.toolCalls) {
+        if (signal.aborted) return finish('cancelled')
+
+        if (state.toolCalls >= config.toolCallCeiling) {
+          state.message = `Stopped after ${config.toolCallCeiling} tool calls.`
+          return finish('max_tool_calls')
+        }
+        state.toolCalls++
+
+        const outcome = await executeCall(call)
+        history.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: JSON.stringify(outcome.result).slice(0, 8000),
+        })
+        if (outcome.preview) pendingPreviews.push(outcome.preview)
+      }
+
+      // Images go in user messages after all tool results: a tool message must immediately follow the
+      // assistant's tool_calls, and image-in-tool-result support varies too much across providers.
+      for (const preview of pendingPreviews) {
+        history.pushPreview(preview.parts, preview.placeholder)
+      }
+
+      const notice = history.prune(state.contextRatio)
+      if (notice) emit({ t: 'warning', message: notice })
+
+      // Budgets are checked between turns rather than mid-turn: the turn's edits all land, and the
+      // spend that pushed the run over its limit is the last spend it makes.
+      if (limits.maxIterations !== undefined && state.iterations >= limits.maxIterations) {
+        exhausted = 'max_iterations'
+        break
+      }
+      if (limits.maxCostUsd !== undefined && state.cost >= limits.maxCostUsd) {
+        exhausted = 'max_cost'
+        break
+      }
+    }
+
+    // A cost limit is the one budget a sign-off turn would itself violate, so that run just stops.
+    if (exhausted === 'max_cost') {
+      state.message =
+        `Stopped after spending $${state.cost.toFixed(4)} of the $${limits.maxCostUsd?.toFixed(4)} ` +
+        `cost limit, in ${state.turns} turns and ${state.iterations} iterations.`
+      return finish('max_cost')
+    }
+
+    // Out of budget — let it sign off without editing further.
+    history.push({
+      role: 'user',
+      content:
+        `You have reached the ${exhausted === 'max_iterations' ? 'preview iteration' : 'turn'} ` +
+        'limit. Make no further edits. Reply with a one-paragraph summary of what you made and ' +
+        'what you would fix with more time.',
+    })
+    const last = await runTurn(
+      {
+        model: model.id,
+        messages: history.toArray(cacheBreakpoints),
+        tools: [],
+        effort: request.reasoningEffort,
+        sendReasoning: model.supportsReasoning,
+        cacheBreakpoints,
+        signal,
+      },
+      {
+        onText: (text) => emit({ t: 'text.delta', text }),
+        onReasoning: (text) => emit({ t: 'reasoning.delta', text }),
+      },
+    ).catch(() => null)
+
+    state.cost += last?.usage.cost ?? 0
+    state.message =
+      last?.text.trim() ||
+      (exhausted === 'max_iterations'
+        ? `Reached the limit of ${limits.maxIterations} preview iterations.`
+        : `Reached the limit of ${limits.maxTurns} turns.`)
+    return finish(exhausted)
+  } catch (err) {
+    if (err instanceof FatalOpenRouterError) {
+      state.message = err.message
+      return finish('error')
+    }
+    if (signal.aborted) return finish('cancelled')
+    state.message = String(err)
+    return finish('error')
+  } finally {
+    await mcp.close()
+  }
+}
+
+/**
+ * A turn that carries nothing at all: no tool calls, no prose, not even reasoning.
+ *
+ * The prompt asks for a plain-text summary as the finish signal, so silence is never a valid way to
+ * say "done" — it means the provider dropped the response. Worth separating, because cost is a
+ * benchmark axis and a dropped turn that scores as a clean finish quietly corrupts the comparison.
+ */
+export function isEmptyResponse(turn: Pick<TurnResult, 'text' | 'reasoning' | 'toolCalls'>): boolean {
+  return turn.toolCalls.length === 0 && !turn.text.trim() && !turn.reasoning.trim()
+}
+
+/**
+ * Wait, but wake immediately if the run is cancelled.
+ *
+ * Resolves on abort rather than rejecting, because cancellation here is not an error: the caller
+ * `continue`s straight into the loop's own `signal.aborted` check, which ends the run as
+ * `cancelled`. Rejecting would route the same thing through the catch as a failure instead.
+ */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal.addEventListener('abort', done, { once: true })
+  })
+}
+
+function safeParse(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return { output: text }
+  }
+}
+
+/** Best-effort final export so the UI always has something to show and download. */
+export async function exportFinal(
+  runDir: string,
+  spriteRelPath: string | undefined,
+): Promise<string | undefined> {
+  if (!spriteRelPath) return undefined
+  const mcp = await PixelMcp.start(runDir)
+  try {
+    const res = await mcp.callTool('export_sprite', {
+      sprite_path: path.resolve(runDir, spriteRelPath),
+      output_path: path.join(runDir, 'exports', 'final.png'),
+      format: 'png',
+      frame_number: 0,
+    })
+    return res.ok ? 'exports/final.png' : undefined
+  } catch {
+    return undefined
+  } finally {
+    await mcp.close()
+  }
+}
