@@ -10,32 +10,60 @@ OpenRouter is currently the only supported provider.
 ## Requirements
 
 - Node 20+
-- [`Aseprite`](https://github.com/aseprite/aseprite) 1.3.10+
-- [`pixel-mcp`](https://github.com/willibrandon/pixel-mcp)
-  - Go 1.23+ (required by pixel-mcp)
+- [Aseprite](https://github.com/aseprite/aseprite) 1.3.10+, built and working
+- [`pixel-mcp`](https://github.com/willibrandon/pixel-mcp), which needs Go 1.23+ to build
+- An [OpenRouter](https://openrouter.ai) API key
 
-Aseprite and pixel-mcp must be built and configured.
+You need a working Aseprite executable before any of this does anything — `pixel-mcp` drives that
+executable, and this app drives `pixel-mcp`. Building it yourself from
+[source](https://github.com/aseprite/aseprite) costs nothing; the prebuilt binaries on Steam and
+aseprite.org are what you pay for. Either works here, as long as `aseprite_path` points at it.
 
-Check the MCP server is healthy first:
+## Setup
+
+### 1. pixel-mcp
+
+Clone it into the project root and build it. That is where this app looks by default, and the
+directory is gitignored, so it stays out of your history:
+
+```sh
+git clone https://github.com/willibrandon/pixel-mcp.git
+cd pixel-mcp && make build && cd ..
+```
+
+Then point it at your Aseprite executable, in `~/.config/pixel-mcp/config.json`:
+
+```json
+{
+  "aseprite_path": "/absolute/path/to/aseprite",
+  "timeout": 30
+}
+```
+
+`aseprite_path` must be absolute — pixel-mcp does no discovery and reads no environment variable for
+it. Confirm the whole chain works before going further:
 
 ```sh
 ./pixel-mcp/bin/pixel-mcp --health
 ```
 
-## Setup
+Clone it somewhere else if you prefer, and set `PIXEL_MCP_BIN` in `.env` to wherever the binary
+landed.
+
+### 2. This app
 
 ```sh
 cp .env.example .env
 ```
 
-Set OPENROUTER_API_KEY and PIXEL_MCP_BIN (if location differs) in .env file.
+Set `OPENROUTER_API_KEY` in `.env`. Everything else there is optional.
 
 ```sh
 npm install
 npm run dev        # server on :8787, web on :5273
 ```
 
-Open http://localhost:5273.
+Open http://localhost:5273. The server listens on localhost only.
 
 ## Configuration
 
@@ -48,6 +76,11 @@ Environment variables (all optional except the key):
 | `PORT` | `8787` | Backend port |
 | `RUNS_DIR` | `./runs` | Where run workspaces are written |
 | `GALLERY_DIR` | `./gallery` | Where saved benchmark results are kept |
+| `PAL_PROMPT_CACHE` | `1` | Prompt caching. `0` measures the uncached cost baseline. |
+
+Relative paths are resolved against the project root, so `./runs` means the same thing wherever you
+start the server from. Node's `.env` parser does no tilde expansion — write `/home/you/...`, not
+`~/...`.
 
 ## How it works
 
@@ -99,4 +132,11 @@ gallery/      saved results (gitignored)
 
 ## Known issues
 
-- I've only tested on Fedora Linux using the Github version of Aseprite
+- Only tested on Fedora Linux with a source build of Aseprite. Nothing here is Linux-specific in
+  principle, but the paths and the Aseprite build are where a macOS or Windows run would differ.
+- The server has no authentication and binds to localhost only, deliberately. Do not put it on a
+  network — it spends a real API key on request.
+- A model with no vision gets no `render_preview` and no `undo`, so it draws blind and is pointed at
+  `get_pixels` instead. Those runs are not really comparable to the sighted ones.
+- Cost is read from OpenRouter's usage accounting, so a cached run and an uncached one are not
+  comparable. `PAL_PROMPT_CACHE=0` gets the baseline.

@@ -62,6 +62,14 @@ the Aseprite executable, and `OPENROUTER_API_KEY` set. The key is read server-si
 that reason. All tunables (budget ceilings, preview sizing, context-pressure thresholds, timeouts)
 live in `config.ts`; prefer adding one there over hardcoding.
 
+The server binds `127.0.0.1` explicitly, and that is not incidental: there is no authentication
+anywhere, and the app proxies a key that spends money, starts runs on request and serves files out of
+the run workspaces. On the default `0.0.0.0` all three belong to whoever shares the network. Making
+it reachable from another machine means adding auth first, not widening the bind. Relatedly,
+`/api/health` reports `ok` from whether the pixel-mcp binary is actually executable rather than from
+the process being up — the first thing a fresh clone gets wrong is that path, and a spawn `ENOENT`
+surfaced as run-end error text reads like the model broke rather than like setup is incomplete.
+
 Environment comes from `.env` at the repo root (`cp .env.example .env`), loaded by the server's own
 npm scripts via `--env-file-if-exists` — *if exists*, so a shell-exported key still works and a
 missing file fails as `assertConfigured`'s clear message rather than an ENOENT. Node's parser does no

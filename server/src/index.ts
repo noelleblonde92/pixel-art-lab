@@ -1,6 +1,7 @@
 import express from 'express'
 import multer from 'multer'
 import fs from 'node:fs/promises'
+import { constants as fsConstants } from 'node:fs'
 import path from 'node:path'
 import { assertConfigured, config } from './config.js'
 import { listModels, getModel } from './openrouter/models.js'
@@ -278,6 +279,8 @@ app.delete('/api/gallery/:id', async (req, res) => {
   }
 })
 
+// The `:param(regex)` form is Express 4 path syntax and was removed in Express 5, which would throw
+// on startup rather than fail a request. On an upgrade, split this into two routes.
 app.get('/api/gallery/:id/:which(image|sprite)', async (req, res) => {
   const which = req.params.which as 'image' | 'sprite'
 
@@ -300,15 +303,46 @@ app.get('/api/gallery/:id/:which(image|sprite)', async (req, res) => {
   })
 })
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, mcpBin: config.mcpBin, runsDir: config.runsDir })
+/**
+ * Liveness, plus the one piece of setup that is worth reporting: whether the pixel-mcp binary is
+ * where the config says. `ok` means the app can actually run something, not merely that the process
+ * is answering — a server that cannot reach pixel-mcp is up and useless.
+ */
+app.get('/api/health', async (_req, res) => {
+  const mcpBinFound = await mcpBinExists()
+  res.json({ ok: mcpBinFound, mcpBin: config.mcpBin, mcpBinFound, runsDir: config.runsDir })
 })
 
-app.listen(config.port, () => {
+// Loopback only, deliberately. There is no authentication here and never will be: the app proxies a
+// key that spends real money, starts runs on request, and serves files out of the run workspaces.
+// Binding the default 0.0.0.0 would hand all three to anyone on the same network — a coffee shop or
+// a shared office — for a tool whose whole design assumes one person on one machine.
+app.listen(config.port, '127.0.0.1', async () => {
   console.log(`pixel-art-lab server on http://localhost:${config.port}`)
-  console.log(`  pixel-mcp: ${config.mcpBin}`)
+  console.log(`  pixel-mcp: ${config.mcpBin}${(await mcpBinExists()) ? '' : '  <- NOT FOUND'}`)
   console.log(`  runs:      ${config.runsDir}`)
+
+  if (!(await mcpBinExists())) {
+    console.warn(
+      `\nNo executable at ${config.mcpBin}, so every run will fail at startup.\n` +
+        'Build pixel-mcp and set PIXEL_MCP_BIN in .env to point at the binary — see the README.',
+    )
+  }
 })
+
+/**
+ * Whether the pixel-mcp binary is actually there and executable.
+ *
+ * Worth checking up front because the failure is otherwise a spawn ENOENT surfaced as run-end error
+ * text, which reads like the model broke rather than like the setup is incomplete — and it is the
+ * first thing anyone who has just cloned this hits.
+ */
+async function mcpBinExists(): Promise<boolean> {
+  return fs
+    .access(config.mcpBin, fsConstants.X_OK)
+    .then(() => true)
+    .catch(() => false)
+}
 
 function parseRunRequest(body: Record<string, unknown>): RunRequest {
   const prompt = String(body.prompt ?? '').trim()
