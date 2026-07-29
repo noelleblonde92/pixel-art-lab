@@ -28,7 +28,7 @@ Check the MCP server is healthy first:
 cp .env.example .env
 ```
 
-Set OPENROUTER_API_KEY and PIXEL_MCP_BIN values in .env file.
+Set OPENROUTER_API_KEY and PIXEL_MCP_BIN (if location differs) in .env file.
 
 ```sh
 npm install
@@ -54,11 +54,14 @@ Environment variables (all optional except the key):
 Each run gets an isolated workspace at `runs/<runId>/` containing `sprites/`, `exports/`,
 `reference/`, and `tmp/`. Every path the model emits is rewritten to stay inside it.
 
-The model sees the `pixel-mcp` tools plus two synthetic ones implemented by this server:
+The model sees the `pixel-mcp` tools plus three synthetic ones implemented by this server:
 
 - **`new_sprite`** — creates a canvas and saves it to `sprites/<name>.aseprite` in one step.
 - **`render_preview`** — copies the sprite, upscales it, exports a PNG,
   and injects it into the conversation as an image.
+- **`draw_pixels`** — wraps pixel-mcp's tool of the same name, which silently clips pixels to the
+  layer's cel bounds. The wrapper temporarily pins the cel to span the whole canvas so the
+  coordinates mean what every other drawing tool means.
 
 Preview images are pruned from history as the run goes on (the 3 most recent are kept in full) so a
 long run doesn't exhaust the context window.
@@ -67,9 +70,9 @@ A run ends when the model says it is finished, or at whichever budget it reaches
 
 - **Max turns** — The number of API calls the model makes. Defaults to 40.
 - **Max iterations** — The number of times the model looks at its own work and fixes it. Defaults to no cap.
-- **Max cost** — Amount spent in dollars spent. Defaults to no cap.
+- **Max cost** — The maximum amount to spend, in dollars. Defaults to no cap.
 
-Only the 40 most recent runs are kept. Does not effect gallery images, as those are saved elsewhere.
+Only the 40 most recent runs are kept. Does not affect gallery images, as those are saved elsewhere.
 
 ## The gallery
 
@@ -92,8 +95,6 @@ runs/         per-run workspaces (gitignored)
 gallery/      saved results (gitignored)
 ```
 
-## Known Issues
+## Known issues
 
-- Only tested on:
-  - Fedora Linux
-  - Github Aseprite build
+- I've only tested on Fedora Linux using the Github version of Aseprite
