@@ -13,7 +13,9 @@ import {
   type SaveToGallery,
 } from './lib/api'
 import { runFileFromUrl } from './lib/gallery'
+import { loadSettings, storeSettings, type Settings } from './lib/settings'
 import { RunForm } from './components/RunForm'
+import { SettingsPane } from './components/SettingsPane'
 import { PreviewStrip } from './components/PreviewStrip'
 import { Transcript } from './components/Transcript'
 import { StatusBar } from './components/StatusBar'
@@ -34,7 +36,10 @@ export default function App() {
   const [entries, setEntries] = useState<GalleryEntry[]>([])
   /** A brief pulled back out of the gallery, waiting to be loaded into the form. */
   const [prefill, setPrefill] = useState<RunRequest | undefined>()
+  const [settings, setSettings] = useState<Settings>(loadSettings)
   const unsubscribe = useRef<(() => void) | null>(null)
+  /** Runs auto-save has already answered for, so one attempt is one attempt. */
+  const autoSaved = useRef(new Set<string>())
 
   useEffect(() => {
     fetchModels()
@@ -71,6 +76,37 @@ export default function App() {
     const entry = await saveToGallery(request)
     setEntries((prev) => [entry, ...prev])
   }, [])
+
+  const updateSettings = useCallback((patch: Partial<Settings>) => {
+    setSettings((prev) => {
+      const next = { ...prev, ...patch }
+      storeSettings(next)
+      return next
+    })
+  }, [])
+
+  /**
+   * Keep a finished run without being asked.
+   *
+   * Only the final image, and only once per run: the attempt is recorded before it is made, so a
+   * save that fails surfaces its error instead of being retried on every render. A run that ended
+   * with no PNG (a fatal error before anything was drawn) has nothing to keep.
+   */
+  useEffect(() => {
+    if (!settings.autoSaveFinal || !runId) return
+    const { status, finalPng, finalSprite } = timeline
+    if (status !== 'finished' || !finalPng) return
+
+    const key = `${runId}:${finalPng}`
+    if (autoSaved.current.has(key) || savedFiles.has(finalPng)) return
+    autoSaved.current.add(key)
+
+    save({ runId, file: finalPng, spriteFile: finalSprite }).catch((err: unknown) =>
+      setLoadError(
+        `Could not save to the gallery: ${String(err instanceof Error ? err.message : err)}`,
+      ),
+    )
+  }, [settings.autoSaveFinal, runId, timeline, savedFiles, save])
 
   const handleStart = async (request: RunRequest, references: File[]) => {
     unsubscribe.current?.()
@@ -155,6 +191,7 @@ export default function App() {
           <Tab active={view === 'gallery'} onClick={() => setView('gallery')}>
             Gallery{entries.length > 0 && ` (${entries.length})`}
           </Tab>
+          <SettingsPane settings={settings} onChange={updateSettings} />
         </nav>
 
         {loadError && (
