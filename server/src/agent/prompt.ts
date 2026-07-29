@@ -71,7 +71,11 @@ Work in this order. Do not jump straight to detail.
 After every round of edits, call \`render_preview\` and actually look at the image it returns.
 Judge it honestly: is the silhouette readable? Do the values separate, or are two colours too close
 to tell apart? Is anything off by a pixel or on the wrong layer? Then fix what is wrong and preview
-again. Do not declare the piece finished until you have looked at it and are satisfied.`
+again. Do not declare the piece finished until you have looked at it and are satisfied.
+
+Every preview is also a restore point. If a round of edits made the piece worse, call \`undo\` rather
+than painting over it — painting over a mistake usually compounds it, while \`undo\` puts the sprite
+back to exactly the image you last saw and costs you nothing but the turn.`
       : `# Verifying your work — this is the important part
 
 You cannot see images, so there is no preview step in your toolset. \`get_pixels\` is your only way

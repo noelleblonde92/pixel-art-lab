@@ -57,6 +57,17 @@ export type RunEvent =
       note?: string
     }
   | {
+      t: 'undo'
+      id: string
+      spritePath: string
+      /**
+       * The iteration the sprite was restored to. Every later preview *of this sprite* pictures a
+       * canvas that no longer exists, which is what lets the UI mark those frames and the server
+       * drop them from context. Iterations are numbered globally, so the sprite path is the scope.
+       */
+      restoredTo: number
+    }
+  | {
       t: 'usage'
       promptTokens: number
       completionTokens: number

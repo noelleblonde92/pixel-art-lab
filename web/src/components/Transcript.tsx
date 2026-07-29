@@ -104,10 +104,15 @@ function EntryView({
           <img
             src={entry.url}
             alt=""
-            className="pixelated h-16 w-16 shrink-0 bg-ink object-contain"
+            className={`pixelated h-16 w-16 shrink-0 bg-ink object-contain ${
+              entry.undone ? 'opacity-40' : ''
+            }`}
           />
           <span className="min-w-0">
-            <span className="block font-mono text-xs text-coral">render_preview</span>
+            <span className="block font-mono text-xs text-coral">
+              render_preview
+              {entry.undone && <span className="text-amber"> · undone</span>}
+            </span>
             <span className="block truncate font-mono text-[11px] text-muted">
               {entry.width}×{entry.height} at {entry.scale}×
               {entry.note ? ` — ${entry.note}` : ''}

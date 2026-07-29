@@ -107,7 +107,35 @@ export const RENDER_PREVIEW_TOOL: FunctionTool = {
   },
 }
 
-export const SYNTHETIC_TOOL_NAMES = new Set(['new_sprite', 'render_preview'])
+export const UNDO_TOOL: FunctionTool = {
+  type: 'function',
+  function: {
+    name: 'undo',
+    description:
+      'Throw away every edit made since your last preview and put the sprite back to exactly the ' +
+      'state you saw in that image. Use this the moment a round of edits has made the piece worse — ' +
+      'reverting is far cheaper than painting over a mistake, and painting over rarely gets the ' +
+      'original pixels back. Pass `iteration` to go further back, to any earlier preview.',
+    parameters: {
+      type: 'object',
+      properties: {
+        sprite_path: {
+          type: 'string',
+          description: 'Path to the sprite, e.g. sprites/knight.aseprite',
+        },
+        iteration: {
+          type: 'integer',
+          description:
+            'Preview iteration to restore, as numbered in each preview message ("iteration N"). ' +
+            'Omit to undo back to the most recent preview.',
+        },
+      },
+      required: ['sprite_path'],
+    },
+  },
+}
+
+export const SYNTHETIC_TOOL_NAMES = new Set(['new_sprite', 'render_preview', 'undo'])
 
 /**
  * MCP hands us JSON Schema and chat/completions takes JSON Schema, so this is a straight lift.
@@ -117,6 +145,10 @@ export const SYNTHETIC_TOOL_NAMES = new Set(['new_sprite', 'render_preview'])
  * a text-only model sent an `image_url` part gets a 400 from the provider that kills the run. A
  * result explaining the refusal would not help either — a model that cannot see has nothing to do
  * with a preview, and the system prompt points it at `get_pixels` instead.
+ *
+ * `undo` goes with it, because previews are what it restores: a model with no preview tool never
+ * takes a checkpoint, so the tool could only ever answer "nothing to undo". Leaving it in the menu
+ * would cost that model schema tokens for a guaranteed dead end.
  */
 export function buildToolset(
   mcpTools: McpToolDef[],
@@ -135,7 +167,9 @@ export function buildToolset(
       },
     }))
 
-  const synthetic = hasVision ? [NEW_SPRITE_TOOL, RENDER_PREVIEW_TOOL] : [NEW_SPRITE_TOOL]
+  const synthetic = hasVision
+    ? [NEW_SPRITE_TOOL, RENDER_PREVIEW_TOOL, UNDO_TOOL]
+    : [NEW_SPRITE_TOOL]
   return [...synthetic, ...forwarded]
 }
 

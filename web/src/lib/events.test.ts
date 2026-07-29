@@ -90,6 +90,68 @@ describe('buildTimeline', () => {
     expect(timeline.previews[1]).toMatchObject({ index: 1, turn: 2 })
   })
 
+  it('marks the previews an undo threw away, and only those', () => {
+    const timeline = buildTimeline([
+      start,
+      { t: 'turn.start', n: 1 },
+      preview('p1'),
+      { t: 'turn.start', n: 2 },
+      preview('p2'),
+      { t: 'turn.start', n: 3 },
+      preview('p3'),
+      { t: 'undo', id: 'u1', spritePath: 'sprites/knight.aseprite', restoredTo: 1 },
+    ])
+    expect(timeline.previews.map((p) => p.undone ?? false)).toEqual([false, true, true])
+  })
+
+  // A preview drawn on top of the restored state is the run moving forward again, not part of the
+  // branch that was discarded — so folding in order is what keeps the marking correct.
+  it('leaves previews taken after the undo unmarked', () => {
+    const timeline = buildTimeline([
+      start,
+      { t: 'turn.start', n: 1 },
+      preview('p1'),
+      { t: 'turn.start', n: 2 },
+      preview('p2'),
+      { t: 'undo', id: 'u1', spritePath: 'sprites/knight.aseprite', restoredTo: 1 },
+      { t: 'turn.start', n: 3 },
+      preview('p3'),
+    ])
+    expect(timeline.previews.map((p) => p.undone ?? false)).toEqual([false, true, false])
+  })
+
+  // Iterations are numbered globally, but an undo rewinds one sprite — another sprite's frame
+  // inside the range is still a true picture of its own canvas.
+  it('only marks frames of the sprite that was undone', () => {
+    const timeline = buildTimeline([
+      start,
+      { t: 'turn.start', n: 1 },
+      preview('p1'),
+      { t: 'turn.start', n: 2 },
+      preview('p2', 'sprites/tree.aseprite'),
+      { t: 'turn.start', n: 3 },
+      preview('p3'),
+      { t: 'undo', id: 'u1', spritePath: 'sprites/knight.aseprite', restoredTo: 1 },
+    ])
+    expect(timeline.previews.map((p) => p.undone ?? false)).toEqual([false, false, true])
+  })
+
+  it('marks the transcript entry as well as the filmstrip frame', () => {
+    const timeline = buildTimeline([
+      start,
+      { t: 'turn.start', n: 1 },
+      preview('p1'),
+      { t: 'turn.start', n: 2 },
+      preview('p2'),
+      { t: 'undo', id: 'u1', spritePath: 'sprites/knight.aseprite', restoredTo: 1 },
+    ])
+    const entries = timeline.entries.filter((e) => e.kind === 'preview')
+    expect(entries.map((e) => (e.kind === 'preview' ? (e.undone ?? false) : null))).toEqual([
+      false,
+      true,
+    ])
+  })
+
   it('sums token usage but takes cost as the running cumulative', () => {
     const timeline = buildTimeline([
       usage(100, 20, 0.001, 0.001),
@@ -136,12 +198,12 @@ describe('buildTimeline', () => {
   })
 })
 
-function preview(id: string): RunEvent {
+function preview(id: string, spritePath = 'sprites/knight.aseprite'): RunEvent {
   return {
     t: 'preview',
     id,
     url: `/api/runs/abc/files/exports/${id}.png`,
-    spritePath: 'sprites/knight.aseprite',
+    spritePath,
     width: 32,
     height: 32,
     scale: 8,

@@ -39,19 +39,22 @@ describe('buildToolset', () => {
   })
 
   // render_preview injects an image as a user message; a text-only model sent one 400s and the run
-  // dies. Withholding the tool is what keeps that unreachable.
-  it('withholds render_preview from a model without vision, in every mode', () => {
+  // dies. Withholding the tool is what keeps that unreachable. undo goes with it: previews are the
+  // only thing it restores, so without them it could only ever answer "nothing to undo".
+  it('withholds render_preview and undo from a model without vision, in every mode', () => {
     for (const mode of ['core', 'full'] as const) {
       const names = buildToolset(mcpTools, mode, false).map((t) => t.function.name)
       expect(names).not.toContain('render_preview')
+      expect(names).not.toContain('undo')
       expect(names[0]).toBe('new_sprite')
     }
   })
 
   it('leaves the rest of the menu alone when vision is absent', () => {
+    const preview = new Set(['render_preview', 'undo'])
     const withVision = buildToolset(mcpTools, 'core', true).map((t) => t.function.name)
     const without = buildToolset(mcpTools, 'core', false).map((t) => t.function.name)
-    expect(without).toEqual(withVision.filter((n) => n !== 'render_preview'))
+    expect(without).toEqual(withVision.filter((n) => !preview.has(n)))
   })
 
   it('drops the selection family from the core set but keeps it in full', () => {

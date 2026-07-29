@@ -7,6 +7,7 @@ import { PathViolation, sandboxArgs, toWorkspaceRelative } from '../mcp/paths.js
 import { newSprite } from '../mcp/newSprite.js'
 import { drawPixels } from '../mcp/drawPixels.js'
 import { renderPreview } from '../mcp/preview.js'
+import { Checkpoints } from '../mcp/checkpoints.js'
 import { buildSystemPrompt } from './prompt.js'
 import { buildFirstUserMessage, History } from './history.js'
 import {
@@ -95,12 +96,26 @@ export function budgetStatus(
 
 interface PendingPreview {
   parts: ContentPart[]
-  placeholder: string
+  description: string
+  /** Workspace-relative, matching the `undo` event — what scopes an undo's drop to one sprite. */
+  spritePath: string
+}
+
+/**
+ * The span of preview iterations a successful `undo` invalidated: everything after the one restored
+ * to, up to the newest that existed when the call ran. Bounded at the top because a later preview in
+ * the same turn is a look at the *restored* canvas and is the one image worth keeping.
+ */
+interface UndoneRange {
+  spritePath: string
+  from: number
+  through: number
 }
 
 interface CallOutcome {
   result: unknown
   preview?: PendingPreview
+  undone?: UndoneRange
 }
 
 export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
@@ -109,6 +124,9 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
   const limits = resolveLimits(request)
 
   const mcp = await PixelMcp.start(runDir)
+
+  /** One snapshot per preview, so `undo` can put the sprite back to a state the model has judged. */
+  const checkpoints = new Checkpoints(runDir)
 
   const state = {
     turns: 0,
@@ -237,9 +255,15 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
           // A render the model never got an image back from is not a look at its work: it is not an
           // iteration, and it carries no budget line, because the count it quoted would be wrong.
           const looked = res.ok && res.image !== undefined
-          if (looked) {
+          if (looked && res.image) {
             state.sawPreview = true
             state.iterations++
+            // The state about to be judged is the one `undo` puts back, which is why the snapshot
+            // hangs off the preview rather than off the edits: a checkpoint nobody looked at is not
+            // a state the model can ask to return to.
+            await checkpoints.capture(res.image.spritePath, state.iterations).catch((err: unknown) => {
+              emit({ t: 'warning', message: `Could not snapshot the sprite for undo: ${String(err)}` })
+            })
           }
 
           // Tallied before the line is built so it counts this preview, and emitted after so the
@@ -274,15 +298,67 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
             note: res.image.note,
           })
 
+          // The message names its iteration because that number is what `undo` takes — without it,
+          // an uncapped run never states the number anywhere (the budget line only counts
+          // iterations when an iteration cap exists).
           return {
             result,
             preview: {
               parts: [
-                { type: 'text', text: `Preview of ${rel} (${dims}). Judge it and fix what is wrong.` },
+                {
+                  type: 'text',
+                  text: `Preview of ${rel}, iteration ${state.iterations} (${dims}). Judge it and fix what is wrong.`,
+                },
                 { type: 'image_url', image_url: { url: res.image.dataUri } },
               ],
-              placeholder: `[preview of ${rel} from iteration ${state.iterations} of turn ${state.turns} (${dims}) — image dropped to save context]`,
+              description: `preview of ${rel} from iteration ${state.iterations} of turn ${state.turns} (${dims})`,
+              spritePath: rel,
             },
+          }
+        }
+
+        // Undo restores a file rather than replaying anything: pixel-mcp is stateless, so the
+        // snapshot taken at a preview is a complete state and copying it back is the whole revert.
+        if (resolvedName === 'undo') {
+          const spritePath = typeof sandboxed.sprite_path === 'string' ? sandboxed.sprite_path : ''
+          // `iteration: null` must mean "not given", the same as omitting it — Number(null) is 0,
+          // which would otherwise turn a default undo into a lookup for iteration 0.
+          const raw = sandboxed.iteration
+          const asked =
+            typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '')
+              ? Math.trunc(Number(raw))
+              : NaN
+          const iteration = Number.isFinite(asked) ? asked : undefined
+
+          const res: { ok: boolean; result: unknown; restoredTo?: number } = spritePath
+            ? await checkpoints.restore(spritePath, iteration)
+            : { ok: false, result: { error: 'sprite_path is required' } }
+
+          const rel = spritePath ? toWorkspaceRelative(spritePath, runDir) : ''
+          if (res.ok) state.lastSprite = rel
+
+          emit({
+            t: 'tool.result',
+            id: call.id,
+            name: resolvedName,
+            ok: res.ok,
+            result: res.result,
+            ms: Date.now() - started,
+          })
+
+          if (res.restoredTo !== undefined) {
+            emit({ t: 'undo', id: call.id, spritePath: rel, restoredTo: res.restoredTo })
+          }
+
+          // `state.iterations` is the newest preview that exists or is pending for this turn, so it
+          // closes the range: anything the model previews after this call is a look at the restored
+          // canvas and stays.
+          return {
+            result: res.result,
+            undone:
+              res.restoredTo !== undefined
+                ? { spritePath: rel, from: res.restoredTo, through: state.iterations }
+                : undefined,
           }
         }
 
@@ -416,6 +492,8 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
       // Strictly sequential: pixel-mcp gives no concurrency guarantees on a single file, and a model
       // can happily emit two calls that mutate the same sprite in one turn.
       const pendingPreviews: PendingPreview[] = []
+      /** Kept as separate spans, not merged: a preview between two undos survives both. */
+      const undone: UndoneRange[] = []
 
       for (const call of turn.toolCalls) {
         if (signal.aborted) return finish('cancelled')
@@ -433,12 +511,20 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentOutcome> {
           content: JSON.stringify(outcome.result).slice(0, 8000),
         })
         if (outcome.preview) pendingPreviews.push(outcome.preview)
+        if (outcome.undone) undone.push(outcome.undone)
       }
 
       // Images go in user messages after all tool results: a tool message must immediately follow the
       // assistant's tool_calls, and image-in-tool-result support varies too much across providers.
       for (const preview of pendingPreviews) {
-        history.pushPreview(preview.parts, preview.placeholder)
+        history.pushPreview(preview.parts, preview.description, preview.spritePath)
+      }
+
+      // Applied after the previews land, not inside the undo call: a turn that previews and *then*
+      // undoes has the image it just discarded still sitting in `pendingPreviews`, and dropping it
+      // earlier would miss the one picture most likely to mislead the next turn.
+      for (const range of undone) {
+        history.dropUndonePreviews(range.spritePath, range.from, range.through)
       }
 
       const notice = history.prune(state.contextRatio)

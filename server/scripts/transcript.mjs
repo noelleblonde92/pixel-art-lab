@@ -129,6 +129,12 @@ for (const e of events) {
       )
       break
 
+    // The iteration tally deliberately keeps counting: an undone preview was still looked at and
+    // still paid for, so it stays spent. Only the canvas goes back.
+    case 'undo':
+      console.log(`  ↺  undo: ${e.spritePath} restored to iteration ${e.restoredTo}`)
+      break
+
     case 'usage':
       console.log(
         `  · tokens in ${e.promptTokens} / out ${e.completionTokens}` +

@@ -31,6 +31,7 @@ export type Entry =
       scale: number
       note?: string
       index: number
+      undone?: boolean
     }
   | { kind: 'warning'; key: string; message: string }
 
@@ -45,6 +46,12 @@ export interface Preview {
   index: number
   /** Which model round-trip produced it. The preview's own iteration number is `index + 1`. */
   turn: number
+  /**
+   * The model later undid its way back past this frame, so it is a state the piece did not keep.
+   * Worth showing rather than hiding — the filmstrip is a record of how the run went, and an
+   * abandoned branch is part of that — but not worth presenting as the piece's evolution.
+   */
+  undone?: boolean
 }
 
 export interface Timeline {
@@ -157,6 +164,29 @@ export function buildTimeline(events: RunEvent[]): Timeline {
         }
         timeline.previews.push(preview)
         timeline.entries.push({ kind: 'preview', key: `prev-${index}`, ...preview })
+        break
+      }
+
+      // The undo itself already shows up as a tool entry, so this only back-marks the frames it
+      // threw away. Previews that arrive afterwards are untouched, because the events are folded in
+      // order and a later frame was drawn on top of the restored state, not discarded with it.
+      // Matching on the sprite matters too: iterations are numbered globally across the run, but an
+      // undo rewinds one file, so another sprite's frames inside the range are still true.
+      case 'undo': {
+        for (const preview of timeline.previews) {
+          if (preview.spritePath === event.spritePath && preview.index + 1 > event.restoredTo) {
+            preview.undone = true
+          }
+        }
+        for (const entry of timeline.entries) {
+          if (
+            entry.kind === 'preview' &&
+            entry.spritePath === event.spritePath &&
+            entry.index + 1 > event.restoredTo
+          ) {
+            entry.undone = true
+          }
+        }
         break
       }
 

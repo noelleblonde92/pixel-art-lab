@@ -54,11 +54,13 @@ Environment variables (all optional except the key):
 Each run gets an isolated workspace at `runs/<runId>/` containing `sprites/`, `exports/`,
 `reference/`, and `tmp/`. Every path the model emits is rewritten to stay inside it.
 
-The model sees the `pixel-mcp` tools plus three synthetic ones implemented by this server:
+The model sees the `pixel-mcp` tools plus four custom ones implemented by this server:
 
 - **`new_sprite`** — creates a canvas and saves it to `sprites/<name>.aseprite` in one step.
 - **`render_preview`** — copies the sprite, upscales it, exports a PNG,
   and injects it into the conversation as an image.
+- **`undo`** — every preview is a restore point, so a model that makes the piece worse can revert to
+  the state it last looked at instead of painting over the mistake.
 - **`draw_pixels`** — wraps pixel-mcp's tool of the same name, which silently clips pixels to the
   layer's cel bounds. The wrapper temporarily pins the cel to span the whole canvas so the
   coordinates mean what every other drawing tool means.

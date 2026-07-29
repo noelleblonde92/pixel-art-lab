@@ -30,14 +30,29 @@ export class History {
     this.messages.push(message)
   }
 
-  /** Add a preview image as a user message — the portable way to get an image into any model. */
-  pushPreview(parts: ContentPart[], placeholder: string): void {
+  /**
+   * Add a preview image as a user message — the portable way to get an image into any model.
+   *
+   * `description` names the image without saying why it went away, because there are two reasons and
+   * they mean opposite things: age, or the state having been undone. `collapse` supplies the reason.
+   */
+  pushPreview(parts: ContentPart[], description: string, spritePath: string): void {
     this.messages.push({ role: 'user', content: parts })
     this.previewIndices.push(this.messages.length - 1)
-    this.placeholders.set(this.messages.length - 1, placeholder)
+    this.descriptions.set(this.messages.length - 1, description)
+    this.previewSprites.set(this.messages.length - 1, spritePath)
   }
 
-  private placeholders = new Map<number, string>()
+  private descriptions = new Map<number, string>()
+  /** Which sprite each preview pictures, so an undo of one sprite cannot claim another's previews. */
+  private previewSprites = new Map<number, string>()
+
+  /** Replace a preview image with a line of text saying what it was and why it is gone. */
+  private collapse(index: number, reason: string): void {
+    const description = this.descriptions.get(index) ?? 'an earlier preview'
+    this.messages[index] = { role: 'user', content: `[${description} — ${reason}]` }
+    this.pruned.add(index)
+  }
 
   /**
    * Collapse older previews to text.
@@ -55,9 +70,7 @@ export class History {
 
     for (const index of stale) {
       if (this.pruned.has(index)) continue
-      const placeholder = this.placeholders.get(index) ?? '[earlier preview image removed]'
-      this.messages[index] = { role: 'user', content: placeholder }
-      this.pruned.add(index)
+      this.collapse(index, 'image dropped to save context')
       dropped++
     }
 
@@ -66,18 +79,54 @@ export class History {
   }
 
   /**
+   * Collapse the previews of states an `undo` has just thrown away.
+   *
+   * Previews are pushed one per iteration in order, so iterations `from + 1` through `through`
+   * picture a canvas that no longer exists. Leaving them is worse than leaving nothing: the newest is
+   * the most recent image the model can see, and it shows precisely the state it asked to be rid of.
+   * A note in the tool result cannot compete with an image — that is the cel trap's lesson — so the
+   * image goes. The line of text stays, because the mistake is still worth remembering and a model
+   * that forgets it will draw it again.
+   *
+   * The range is closed at both ends rather than running to the newest preview, because a model that
+   * undoes and then previews to confirm the revert does both inside one turn. That confirming image
+   * is the only accurate one in the conversation, and an open-ended drop would take it.
+   *
+   * Scoped to one sprite for the same kind of reason: iterations are numbered globally across the
+   * run, but an undo rewinds a single file, so a preview of a *different* sprite inside the range is
+   * still true of its canvas and stays.
+   */
+  dropUndonePreviews(spritePath: string, from: number, through: number): number {
+    let dropped = 0
+    // Both bounds are 1-based iteration numbers, and the restored preview is still true of the
+    // canvas — so the slice starts *at* `from`, which is the ordinal after it.
+    for (const index of this.previewIndices.slice(Math.max(0, from), Math.max(0, through))) {
+      if (this.pruned.has(index)) continue
+      if (this.previewSprites.get(index) !== spritePath) continue
+      this.collapse(index, 'you undid this state; it is not what is on the canvas, image removed')
+      dropped++
+    }
+    return dropped
+  }
+
+  /**
    * The highest index that will never be rewritten again.
    *
-   * Pruning collapses previews *in place*, and any edit invalidates every cache breakpoint at or
-   * after it — so on a turn where `prune` fired, the rolling tail breakpoint from the previous turn
-   * is worthless. But pruning only ever walks forward: once a preview has decayed to text it is
-   * frozen, and every preview before it has decayed too. That makes the newest pruned index a
-   * permanently stable boundary, and a breakpoint there survives the invalidation.
+   * Collapsing a preview rewrites it *in place*, and any edit invalidates every cache breakpoint at
+   * or after it — so on a turn where one fired, the rolling tail breakpoint from the previous turn is
+   * worthless. What survives is the end of the *contiguous* run of collapsed previews: nothing before
+   * it can change again, so a breakpoint there holds.
+   *
+   * The contiguity is the whole point and is easy to lose. Age-based pruning alone only ever walks
+   * forward, which made "the newest collapsed index" an equivalent and simpler answer — but
+   * `dropUndonePreviews` collapses the *newest* previews while older ones are still live images, and
+   * under that answer the breakpoint would land past previews `prune` is still going to rewrite.
    */
   private cacheFrontier(): number | null {
     let frontier: number | null = null
-    for (const index of this.pruned) {
-      if (frontier === null || index > frontier) frontier = index
+    for (const index of this.previewIndices) {
+      if (!this.pruned.has(index)) break
+      frontier = index
     }
     return frontier
   }

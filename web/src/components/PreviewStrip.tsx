@@ -49,6 +49,7 @@ export function PreviewStrip({ previews, selected, onSelect, savedFiles, onSave 
           <div>
             <p className="eyebrow">
               Iteration {selected + 1} of {previews.length} · turn {current.turn}
+              {current.undone && <span className="text-amber"> · undone</span>}
             </p>
             <p className="mt-1 font-mono text-sm text-bright">{current.spritePath}</p>
             <p className="font-mono text-[11px] text-muted">
@@ -62,24 +63,38 @@ export function PreviewStrip({ previews, selected, onSelect, savedFiles, onSave 
             </p>
           )}
 
+          {current.undone && (
+            <p className="border-l-2 border-amber pl-3 font-mono text-xs leading-relaxed text-amber">
+              The model undid its way back past this frame, so the piece never kept it.
+            </p>
+          )}
+
           <div className="flex flex-wrap gap-1.5">
             {previews.map((preview, index) => (
               <button
                 key={preview.id + index}
                 type="button"
                 onClick={() => onSelect(index)}
-                title={`Iteration ${index + 1} · turn ${preview.turn}`}
+                title={
+                  `Iteration ${index + 1} · turn ${preview.turn}` +
+                  (preview.undone ? ' · undone' : '')
+                }
                 aria-current={index === selected}
                 className={`border p-0.5 transition-colors ${
                   index === selected
                     ? 'border-coral'
-                    : 'border-edge hover:border-muted'
+                    : preview.undone
+                      ? 'border-dashed border-edge hover:border-amber'
+                      : 'border-edge hover:border-muted'
                 }`}
               >
                 <img
                   src={preview.url}
                   alt=""
-                  className="pixelated block h-10 w-10 object-contain bg-ink"
+                  // Faded rather than hidden: an abandoned branch still belongs to the run's record.
+                  className={`pixelated block h-10 w-10 object-contain bg-ink ${
+                    preview.undone ? 'opacity-40' : ''
+                  }`}
                 />
               </button>
             ))}

@@ -171,7 +171,7 @@ the same `isInside` check when serving.
 
 ### Synthetic tools
 
-Three tools in the model's menu are implemented here, not by pixel-mcp:
+Four tools in the model's menu are implemented here, not by pixel-mcp:
 
 - **`new_sprite`** (`mcp/newSprite.ts`) — fuses `create_canvas` + `save_as`. `create_canvas` takes no
   path and writes to a temp dir that gets wiped; it is in `ALWAYS_HIDDEN` so no model ever sees that
@@ -182,8 +182,35 @@ Three tools in the model's menu are implemented here, not by pixel-mcp:
   the injected `image_url` part is a 400 from a text-only endpoint, so leaving the tool in the menu
   hands the model a way to kill its own run. A blind model gets no preview tool, no iteration cap in
   its prompt (it could never reach one) and is pointed at `get_pixels` instead.
+- **`undo`** (`mcp/checkpoints.ts`) — restores the sprite to the state of a preview. See below.
 - **`draw_pixels`** (`mcp/drawPixels.ts`) — keeps pixel-mcp's name and schema, but the call is
   wrapped rather than forwarded. See below.
+
+**Undo is a file copy, and the preview is the checkpoint.** pixel-mcp is stateless — every drawing
+tool ends in `spr:saveAs(spr.filename)` — so the `.aseprite` on disk is the entire state and copying
+it captures pixels, layers, frames, palette and tags at once. There is no Aseprite undo history to
+drive and nothing to keep in step. `Checkpoints.capture` snapshots into `tmp/checkpoints/` from the
+`render_preview` branch of the loop, once per preview the model actually got an image back from,
+labelled with that iteration number; `undo` copies one back.
+
+The preview is the checkpoint because it is the only moment the model has *judged* the work — "put it
+back how it was" is only meaningful about a state someone looked at — and because the image
+describing the restored state is already in context, so the tool result needs only name the iteration.
+That is also why `buildToolset` withholds `undo` from a blind model alongside `render_preview`: with
+no previews it would take no checkpoints and could only ever answer "nothing to undo".
+
+Two behaviours in `restore` are load-bearing. It compares the live file's hash against the newest
+checkpoint and **steps one further back when they match**, because the newest checkpoint *is* the
+current state whenever nothing has been drawn since — restoring it would report success and change
+nothing, and a second `undo` has to keep walking backwards. And it **truncates** the stack at the
+restored point, deleting the snapshots after it: those describe work that was just thrown away, so
+leaving them would let a later undo land in a state the model had already rejected. The revert was
+confirmed against a real Aseprite install (pixels, layers and palette all came back).
+
+A restore also has to reach *context*, or the model is left looking at a picture of a canvas that no
+longer exists — see `dropUndonePreviews` under "Context management". The `undo` event carries
+`restoredTo` so the browser can mark those frames too; the iteration tally deliberately does not go
+back, because an undone preview was still looked at and still paid for.
 
 **The cel trap and why `draw_pixels` is wrapped.** pixel-mcp's `draw_pixels` addresses the layer's
 *cel*, not the canvas: coordinates are cel-relative, anything outside the cel's bounding box is
@@ -216,14 +243,35 @@ varies by provider. Older previews decay to one-line text placeholders (`keptPre
 when `promptTokens / contextLength` crosses `contextPressureThreshold`). User-supplied reference
 images are never pruned.
 
+A preview image can go for two reasons that mean opposite things, so `pushPreview` stores a
+*description* and `collapse` supplies the reason. `prune` drops images for age. `dropUndonePreviews`
+drops the ones an `undo` invalidated: the model has just restored an older state, and the newest
+image it can otherwise see is the state it asked to be rid of. A note in the tool result does not
+compete with an image — same lesson as the cel trap — so the image goes and the line of text stays,
+because a mistake the model cannot recall is one it draws again.
+
+Both ends of that range matter, and both are about a single turn's ordering. The loop applies it
+*after* the turn's pending previews are pushed, because a turn that previews and *then* undoes still
+has the discarded image sitting in `pendingPreviews` — the one picture most likely to mislead the
+next turn. And the range is closed at the top (`state.iterations` as the call ran), because a turn
+that undoes and *then* previews to confirm has produced the only accurate image in the conversation,
+which an open-ended drop would take. Ranges are kept separate rather than merged for the same
+reason: a preview between two undos survives both. And the drop is scoped to the undone sprite —
+iterations are numbered globally but an undo rewinds one file, so another sprite's preview inside
+the range is still true of its canvas (the browser fold filters on the event's `spritePath` for the
+same reason).
+
 `toArray(cacheBreakpoints)` applies two **static** cache breakpoints to a shallow copy — the stored
 messages stay unmarked so marks cannot accumulate or reach the transcript. The first is the system
 prompt (fixed for the run; tools serialise ahead of it, so one marker covers the whole tool menu).
-The second is the *pruning frontier*, and it exists because `prune` rewrites previews **in place**:
-any edit invalidates every breakpoint at or after it, so on a turn that pruned, the rolling tail
-marker is dead. Pruning only ever walks forward, so the newest pruned index is permanently frozen
-and a breakpoint there survives. If you make pruning rewrite anything else, `cacheFrontier` is the
-invariant you are breaking.
+The second is the *pruning frontier*, and it exists because collapsing rewrites previews **in
+place**: any edit invalidates every breakpoint at or after it, so on a turn that collapsed anything,
+the rolling tail marker is dead. What survives is the end of the **contiguous** run of collapsed
+previews — nothing before it can change again. The contiguity is load-bearing and easy to lose:
+age-pruning alone only walks forward, which made "the newest collapsed index" an equivalent and
+simpler answer, but `dropUndonePreviews` collapses the *newest* previews while older ones are still
+live images, and that answer would put the breakpoint past previews `prune` has yet to rewrite. If
+you make anything else rewrite messages, `cacheFrontier` is the invariant you are breaking.
 
 ### System prompt (`server/src/agent/prompt.ts`)
 
@@ -271,7 +319,9 @@ and change the other, or the SSE contract silently drifts.
 
 Vitest, colocated `*.test.ts`, covering the pure logic: path sandboxing, toolset filtering/name
 matching, the `draw_pixels` cel wrapper against a fake that models the clipping, history pruning,
-SSE chunk parsing, the browser-side timeline fold, the run-stats summary and prompt grouping.
+SSE chunk parsing, the browser-side timeline fold, the run-stats summary and prompt grouping. The
+`undo` checkpoints are covered against real files in a temp dir — sprite contents are plain strings
+there, which is enough because the revert is a byte-for-byte copy either way.
 Anything requiring a live model is exercised by `smoke.mjs` instead.
 
 Aseprite-dependent behaviour has no standing harness, so when you change something in `mcp/` that
