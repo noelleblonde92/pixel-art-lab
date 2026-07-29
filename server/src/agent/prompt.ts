@@ -30,7 +30,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 Your job is to produce one finished, readable piece of pixel art and then stop.`,
   )
 
-  sections.push(`# The brief
+  sections.push(`# The prompt
 
 ${req.prompt.trim()}`)
 

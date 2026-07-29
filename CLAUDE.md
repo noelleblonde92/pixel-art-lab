@@ -99,7 +99,7 @@ and entries saved then keep the turn tally in `stats.iterations`, the preview ta
 `stats.previews`, and the turn cap in `request.maxIterations` (`migrateEntry`, keyed off the absence
 of `stats.turns`, applied on read so the file itself stays as the run produced it).
 
-The brief is the grouping key (`groupByBrief`, case- and whitespace-insensitive), so two models given
+The prompt is the grouping key (`groupByPrompt`, case- and whitespace-insensitive), so two models given
 the same words line up automatically and no one has to name a benchmark. "Run again" prefills
 everything *except* the model — carrying the canvas and budget over is what makes the second answer
 comparable, and changing the model is the entire point. `leaders` marks ties rather than breaking
@@ -264,7 +264,7 @@ and change the other, or the SSE contract silently drifts.
 
 Vitest, colocated `*.test.ts`, covering the pure logic: path sandboxing, toolset filtering/name
 matching, the `draw_pixels` cel wrapper against a fake that models the clipping, history pruning,
-SSE chunk parsing, the browser-side timeline fold, the run-stats summary and brief grouping.
+SSE chunk parsing, the browser-side timeline fold, the run-stats summary and prompt grouping.
 Anything requiring a live model is exercised by `smoke.mjs` instead.
 
 Aseprite-dependent behaviour has no standing harness, so when you change something in `mcp/` that

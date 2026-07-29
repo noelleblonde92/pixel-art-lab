@@ -3,13 +3,13 @@ import type { GalleryEntry } from '../types'
 /**
  * The gallery, folded into benchmarks.
  *
- * The brief *is* the benchmark: two entries drawn from the same words are two models answering the
+ * The prompt *is* the benchmark: two entries drawn from the same words are two models answering the
  * same question, and that is the only comparison worth putting side by side. Grouping is therefore
  * on the prompt text rather than on anything the user has to remember to set.
  */
-export interface Brief {
+export interface PromptGroup {
   key: string
-  /** The brief as first written — later entries with trivially different spacing join the group. */
+  /** The prompt as first written — later entries with trivially different spacing join the group. */
   prompt: string
   entries: GalleryEntry[]
   /** How many distinct models have attempted it. */
@@ -18,15 +18,15 @@ export interface Brief {
   savedAt: number
 }
 
-export function briefKey(prompt: string): string {
+export function promptKey(prompt: string): string {
   return prompt.trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
-export function groupByBrief(entries: GalleryEntry[]): Brief[] {
-  const groups = new Map<string, Brief>()
+export function groupByPrompt(entries: GalleryEntry[]): PromptGroup[] {
+  const groups = new Map<string, PromptGroup>()
 
   for (const entry of entries) {
-    const key = briefKey(entry.request.prompt)
+    const key = promptKey(entry.request.prompt)
     const existing = groups.get(key)
 
     if (existing) {
@@ -43,13 +43,13 @@ export function groupByBrief(entries: GalleryEntry[]): Brief[] {
     }
   }
 
-  const briefs = [...groups.values()]
-  for (const brief of briefs) {
-    brief.entries.sort((a, b) => a.savedAt - b.savedAt)
-    brief.models = new Set(brief.entries.map((e) => e.request.model)).size
+  const prompts = [...groups.values()]
+  for (const group of prompts) {
+    group.entries.sort((a, b) => a.savedAt - b.savedAt)
+    group.models = new Set(group.entries.map((e) => e.request.model)).size
   }
 
-  return briefs.sort((a, b) => b.savedAt - a.savedAt)
+  return prompts.sort((a, b) => b.savedAt - a.savedAt)
 }
 
 /**

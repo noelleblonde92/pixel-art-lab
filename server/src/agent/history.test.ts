@@ -8,7 +8,7 @@ const parts = (label: string): ContentPart[] => [
 ]
 
 function historyWithPreviews(count: number): History {
-  const history = new History('system', buildFirstUserMessage('brief', ['data:image/png;base64,REF'], true))
+  const history = new History('system', buildFirstUserMessage('prompt', ['data:image/png;base64,REF'], true))
   for (let i = 1; i <= count; i++) {
     history.push({ role: 'assistant', content: `turn ${i}` })
     history.pushPreview(parts(`p${i}`), `[preview ${i} dropped]`)

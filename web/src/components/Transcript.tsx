@@ -38,7 +38,7 @@ export function Transcript({ entries, running, onSelectPreview }: Props) {
       >
         {visible.length === 0 && (
           <p className="font-mono text-xs leading-relaxed text-muted">
-            Nothing yet. Fill in a brief on the left and start a run — the model's reasoning, every
+            Nothing yet. Fill in a prompt on the left and start a run — the model's reasoning, every
             tool call, and each preview render will appear here as it happens.
           </p>
         )}

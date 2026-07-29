@@ -7,7 +7,7 @@ import { formatCost } from '../lib/format'
 interface Props {
   models: ModelInfo[]
   busy: boolean
-  /** A brief recalled from the gallery, to be answered again. */
+  /** A prompt recalled from the gallery, to be answered again. */
   prefill?: RunRequest
   onPrefillUsed: () => void
   onStart: (request: RunRequest, references: File[]) => void
@@ -34,9 +34,9 @@ export function RunForm({ models, busy, prefill, onPrefillUsed, onStart, onCance
   const fileInput = useRef<HTMLInputElement>(null)
 
   /**
-   * Recall a brief from the gallery — everything except the model.
+   * Recall a prompt from the gallery — everything except the model.
    *
-   * The reason to run a saved brief again is to see what a *different* model makes of it, and the
+   * The reason to run a saved prompt again is to see what a *different* model makes of it, and the
    * canvas and budget have to carry over or the second result is not comparable. References are the
    * one thing that cannot come back: the browser has no file to re-attach.
    */
@@ -110,7 +110,7 @@ export function RunForm({ models, busy, prefill, onPrefillUsed, onStart, onCance
 
       <div className="space-y-2">
         <label className="eyebrow" htmlFor="prompt">
-          Brief
+          Prompt
         </label>
         <textarea
           id="prompt"

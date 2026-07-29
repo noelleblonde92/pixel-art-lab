@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises'
-import { createWriteStream, type WriteStream } from 'node:fs'
+import { createWriteStream, type Dirent, type WriteStream } from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { config } from './config.js'
@@ -150,7 +150,7 @@ export function cancelRun(run: Run): void {
 }
 
 /** Keep the runs directory from growing without bound across sessions. */
-export async function pruneOldRuns(keep = 40): Promise<void> {
+export async function pruneOldRuns(keep = config.runsKept): Promise<void> {
   let entries: string[]
   try {
     entries = await fs.readdir(config.runsDir)
@@ -177,4 +177,55 @@ export async function pruneOldRuns(keep = 40): Promise<void> {
     if (runs.has(path.basename(stale.full))) continue
     await fs.rm(stale.full, { recursive: true, force: true }).catch(() => {})
   }
+}
+
+export interface DeleteRunsResult {
+  /** Workspaces deleted by this call. */
+  removed: number
+  /** Workspaces left alone because the run is still going. */
+  skipped: number
+}
+
+/**
+ * Delete every run workspace on disk.
+ *
+ * A workspace is disposable by design — the gallery keeps copies of anything worth keeping — so
+ * this costs only the transcripts and sprites of runs nobody saved. A run that is still *going* is
+ * skipped: deleting the directory out from under it would break the run and the `events.jsonl` it
+ * is still writing. A finished run is deleted and dropped from the map with it, so nothing is left
+ * pointing at a workspace that is no longer there. Reports what it did, because a
+ * delete-everything button that says nothing is a button nobody trusts.
+ */
+export async function deleteAllRuns(): Promise<DeleteRunsResult> {
+  let entries: Dirent[]
+  try {
+    entries = await fs.readdir(config.runsDir, { withFileTypes: true })
+  } catch {
+    return { removed: 0, skipped: 0 }
+  }
+
+  let removed = 0
+  let skipped = 0
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+
+    if (runs.get(entry.name)?.status === 'running') {
+      skipped += 1
+      continue
+    }
+
+    const gone = await fs
+      .rm(path.join(config.runsDir, entry.name), { recursive: true, force: true })
+      .then(() => true)
+      .catch(() => false)
+
+    if (gone) {
+      removed += 1
+      runs.delete(entry.name)
+    } else {
+      skipped += 1
+    }
+  }
+
+  return { removed, skipped }
 }

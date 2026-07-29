@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { deleteAllRuns } from '../lib/api'
 import type { Settings } from '../lib/settings'
 
 interface Props {
@@ -14,6 +15,9 @@ interface Props {
  */
 export function SettingsPane({ settings, onChange }: Props) {
   const [open, setOpen] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [result, setResult] = useState<string>()
   const root = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -31,6 +35,34 @@ export function SettingsPane({ settings, onChange }: Props) {
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [open])
+
+  // Closing the panel disarms: a Delete button left cocked from five minutes ago is a trap the next
+  // click walks into.
+  useEffect(() => {
+    if (open) return
+    setConfirming(false)
+    setResult(undefined)
+  }, [open])
+
+  // Whatever it did, say so in place of the explanation — deleting nothing and deleting forty runs
+  // look identical from here otherwise.
+  const remove = async () => {
+    setConfirming(false)
+    setDeleting(true)
+    try {
+      const { removed, skipped } = await deleteAllRuns()
+      const survivor = skipped > 0 ? `, kept ${plural(skipped, 'run')} still going` : ''
+      setResult(
+        removed === 0 && skipped === 0
+          ? 'No run workspaces to delete.'
+          : `Deleted ${plural(removed, 'run')}${survivor}.`,
+      )
+    } catch (err) {
+      setResult(String(err instanceof Error ? err.message : err))
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <div ref={root} className="relative ml-auto">
@@ -61,10 +93,54 @@ export function SettingsPane({ settings, onChange }: Props) {
               </span>
             </span>
           </label>
+
+          <div className="space-y-1.5 border-t border-edge pt-3">
+            {confirming ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  autoFocus
+                  onClick={() => void remove()}
+                  className="border border-coral px-2.5 py-1 font-mono text-[11px] text-coral hover:bg-coral hover:text-ink"
+                >
+                  Delete them
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirming(false)}
+                  className="font-mono text-[11px] text-muted hover:text-body"
+                >
+                  cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setResult(undefined)
+                  setConfirming(true)
+                }}
+                disabled={deleting}
+                className="border border-edge px-2.5 py-1 font-mono text-[11px] text-body hover:border-coral hover:text-coral disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {deleting ? 'Deleting…' : 'Delete all runs'}
+              </button>
+            )}
+            <p className="text-[11px] leading-snug text-muted">
+              {confirming
+                ? 'Deletes every run workspace — transcripts, sprites and exports. A run still going is left alone.'
+                : (result ??
+                  'Clear out the run workspaces on disk. Gallery entries are copies and are kept.')}
+            </p>
+          </div>
         </div>
       )}
     </div>
   )
+}
+
+function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`
 }
 
 function CogIcon() {

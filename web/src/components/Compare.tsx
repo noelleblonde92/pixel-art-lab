@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { GalleryEntry } from '../types'
 import { galleryImageUrl } from '../lib/api'
-import { briefKey, entryTitle, leaders } from '../lib/gallery'
+import { entryTitle, leaders, promptKey } from '../lib/gallery'
 import { endReasonLabel } from '../lib/events'
 import { formatCost, formatElapsed, formatTokens } from '../lib/format'
 
@@ -64,7 +64,7 @@ const ROWS: Row[] = [
 ]
 
 /**
- * Several models' answers to the same brief, side by side.
+ * Several models' answers to the same prompt, side by side.
  *
  * The images are the argument, so they get the room; the numbers underneath exist to answer "and
  * what did that cost?". Cheapest, fastest and fewest-steps are marked because those are the axes
@@ -78,23 +78,23 @@ export function Compare({ entries, onClose }: Props) {
     ROWS.filter((row) => row.metric).map((row) => [row.label, leaders(entries, row.metric!)]),
   )
 
-  // Selecting across groups is allowed, but then there is no single brief to put in the header —
+  // Selecting across groups is allowed, but then there is no single prompt to put in the header —
   // and no honest like-for-like reading of the numbers below either.
-  const key = briefKey(entries[0].request.prompt)
-  const sameBrief = entries.every((e) => briefKey(e.request.prompt) === key)
+  const key = promptKey(entries[0].request.prompt)
+  const samePrompt = entries.every((e) => promptKey(e.request.prompt) === key)
 
   return (
     <div className="fixed inset-0 z-30 flex flex-col bg-ink/95 backdrop-blur-sm">
       <header className="flex items-start justify-between gap-6 border-b border-edge px-6 py-4">
         <div className="min-w-0">
           <p className="eyebrow">Comparing {entries.length} attempts</p>
-          {sameBrief ? (
+          {samePrompt ? (
             <p className="mt-1 truncate font-sans text-sm text-bright">
               {entries[0].request.prompt}
             </p>
           ) : (
             <p className="mt-1 font-mono text-xs text-amber">
-              Different briefs — the images answer different questions, so read the numbers with
+              Different prompts — the images answer different questions, so read the numbers with
               care.
             </p>
           )}

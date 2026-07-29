@@ -7,6 +7,7 @@ import { listModels, getModel } from './openrouter/models.js'
 import {
   cancelRun,
   createRun,
+  deleteAllRuns,
   emitTo,
   getRun,
   pruneOldRuns,
@@ -137,6 +138,20 @@ async function start(
   }
 }
 
+/**
+ * Clear out the run workspaces.
+ *
+ * Starting a run already prunes the oldest, so this is for the session that wants the whole
+ * directory back. A run still in flight survives it — see `deleteAllRuns`.
+ */
+app.delete('/api/runs', async (_req, res) => {
+  try {
+    res.json(await deleteAllRuns())
+  } catch (err) {
+    res.status(500).json({ error: String(err instanceof Error ? err.message : err) })
+  }
+})
+
 app.get('/api/runs/:id/events', (req, res) => {
   const run = getRun(req.params.id)
   if (!run) {
@@ -206,7 +221,7 @@ app.get('/api/gallery', async (_req, res) => {
  * Save an image out of a run.
  *
  * The run is the source of truth for everything except the image itself, so the browser only says
- * *which* file it wants kept — the model, the brief and the tallies are read back off the run,
+ * *which* file it wants kept — the model, the prompt and the tallies are read back off the run,
  * whether it is still in memory or only in `events.jsonl`.
  */
 app.post('/api/gallery', async (req, res) => {

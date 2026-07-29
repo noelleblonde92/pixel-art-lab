@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupByBrief, leaders, runFileFromUrl } from './gallery'
+import { groupByPrompt, leaders, runFileFromUrl } from './gallery'
 import type { GalleryEntry } from '../types'
 
 let counter = 0
@@ -36,47 +36,47 @@ const entry = (
   }
 }
 
-describe('groupByBrief', () => {
-  it('groups two models answering the same brief', () => {
-    const briefs = groupByBrief([
+describe('groupByPrompt', () => {
+  it('groups two models answering the same prompt', () => {
+    const prompts = groupByPrompt([
       entry('A knight', 'anthropic/claude'),
       entry('A knight', 'openai/gpt'),
       entry('A dragon', 'openai/gpt'),
     ])
 
-    expect(briefs).toHaveLength(2)
-    const knight = briefs.find((b) => b.prompt === 'A knight')!
+    expect(prompts).toHaveLength(2)
+    const knight = prompts.find((p) => p.prompt === 'A knight')!
     expect(knight.entries).toHaveLength(2)
     expect(knight.models).toBe(2)
   })
 
   // Whitespace and case are not a different benchmark question.
-  it('ignores case and whitespace differences in the brief', () => {
-    const briefs = groupByBrief([
+  it('ignores case and whitespace differences in the prompt', () => {
+    const prompts = groupByPrompt([
       entry('A knight  in armour', 'a/one'),
       entry('a knight in armour\n', 'b/two'),
     ])
 
-    expect(briefs).toHaveLength(1)
-    expect(briefs[0].entries).toHaveLength(2)
+    expect(prompts).toHaveLength(1)
+    expect(prompts[0].entries).toHaveLength(2)
   })
 
   it('counts one model twice as one model, two attempts', () => {
-    const briefs = groupByBrief([entry('A knight', 'a/one'), entry('A knight', 'a/one')])
+    const prompts = groupByPrompt([entry('A knight', 'a/one'), entry('A knight', 'a/one')])
 
-    expect(briefs[0].entries).toHaveLength(2)
-    expect(briefs[0].models).toBe(1)
+    expect(prompts[0].entries).toHaveLength(2)
+    expect(prompts[0].models).toBe(1)
   })
 
   it('orders groups by their newest save and entries oldest first', () => {
-    const old = entry('Old brief', 'a/one', { savedAt: 10 })
-    const first = entry('New brief', 'a/one', { savedAt: 20 })
-    const second = entry('New brief', 'b/two', { savedAt: 30 })
+    const old = entry('Old prompt', 'a/one', { savedAt: 10 })
+    const first = entry('New prompt', 'a/one', { savedAt: 20 })
+    const second = entry('New prompt', 'b/two', { savedAt: 30 })
 
-    const briefs = groupByBrief([old, second, first])
+    const prompts = groupByPrompt([old, second, first])
 
-    expect(briefs.map((b) => b.prompt)).toEqual(['New brief', 'Old brief'])
-    expect(briefs[0].entries.map((e) => e.savedAt)).toEqual([20, 30])
+    expect(prompts.map((p) => p.prompt)).toEqual(['New prompt', 'Old prompt'])
+    expect(prompts[0].entries.map((e) => e.savedAt)).toEqual([20, 30])
   })
 })
 

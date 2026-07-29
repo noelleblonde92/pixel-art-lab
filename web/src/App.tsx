@@ -34,7 +34,7 @@ export default function App() {
   const [pinnedPreview, setPinnedPreview] = useState(false)
   const [view, setView] = useState<View>('run')
   const [entries, setEntries] = useState<GalleryEntry[]>([])
-  /** A brief pulled back out of the gallery, waiting to be loaded into the form. */
+  /** A prompt pulled back out of the gallery, waiting to be loaded into the form. */
   const [prefill, setPrefill] = useState<RunRequest | undefined>()
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const unsubscribe = useRef<(() => void) | null>(null)

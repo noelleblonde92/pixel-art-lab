@@ -129,7 +129,7 @@ function withCacheControl(message: ChatMessage): ChatMessage {
   return { ...message, content: parts }
 }
 
-/** Build the opening user message: the brief, plus any reference images the model can actually see. */
+/** Build the opening user message: the prompt, plus any reference images the model can actually see. */
 export function buildFirstUserMessage(
   prompt: string,
   referenceDataUris: string[],

@@ -5,6 +5,8 @@ A local web app for making pixel art in Aseprite using LLMs.
 It works by using [`pixel-mcp`](https://github.com/willibrandon/pixel-mcp) to let the model interact with Aseprite
 through a tool-calling loop — the model draws, renders a preview, looks at it, and iteratively fixes the issues.
 
+OpenRouter is currently the only supported provider.
+
 ## Requirements
 
 - Node 20+
@@ -62,6 +64,8 @@ A run ends when the model says it is finished, or at whichever budget it reaches
 - **Max iterations** — The number of times the model looks at its own work and fixes it. Defaults to no cap.
 - **Max cost** — Amount spent in dollars spent. Defaults to no cap.
 
+Only the 40 most recent runs are kept. Does not effect gallery images, as those are saved elsewhere.
+
 ## The gallery
 
 The **Gallery** tab shows all final results, grouped by prompt. Models with the same prompt are grouped
@@ -74,11 +78,11 @@ A saved entry is a full copy, so it survives `pruneOldRuns` deleting the workspa
 
 ```
 server/src/
-  mcp/        stdio client, tool curation, path sandbox, synthetic tools
-  openrouter/ model catalogue + streaming chat/completions client
-  agent/      the loop, system prompt, history management
-  gallery.ts  saved results: copy out, summarise the run, list/label/delete
+  mcp/        stdio, tool use, sandboxing
+  openrouter/ OpenRouter API streaming
+  agent/      main loop, system prompt, history management
+  gallery.ts  saved results, download, compare
 web/src/      React UI
 runs/         per-run workspaces (gitignored)
-gallery/      saved benchmark results (gitignored)
+gallery/      saved results (gitignored)
 ```

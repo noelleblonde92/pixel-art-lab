@@ -35,7 +35,7 @@ export function ModelPicker({ models, value, onChange, disabled }: Props) {
             onChange={(e) => setVisionOnly(e.target.checked)}
             className="h-3 w-3 accent-coral p-0"
           />
-          can see previews
+          supports vision
         </label>
       </div>
 
@@ -108,10 +108,10 @@ function Capabilities({ model }: { model: ModelInfo }) {
     <div className="space-y-1.5">
       <div className="flex flex-wrap gap-1.5">
         <Tag tone={model.supportsVision ? 'good' : 'warn'}>
-          {model.supportsVision ? 'sees previews' : 'cannot see previews'}
+          {model.supportsVision ? 'vision supported' : 'vision unsupported'}
         </Tag>
-        {model.supportsEffort && <Tag tone="neutral">reasoning effort</Tag>}
-        {model.isModerated && <Tag tone="neutral">provider moderated</Tag>}
+        {/* {model.supportsEffort && <Tag tone="neutral">reasoning effort</Tag>} */}
+        {/* {model.isModerated && <Tag tone="neutral">provider moderated</Tag>} */}
       </div>
       <p className="font-mono text-[10px] leading-relaxed text-muted">
         {formatPrice(model.promptPrice)}/M in · {formatPrice(model.completionPrice)}/M out ·{' '}

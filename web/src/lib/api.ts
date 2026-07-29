@@ -24,6 +24,22 @@ export async function cancelRun(runId: string): Promise<void> {
   await fetch(`/api/runs/${runId}/cancel`, { method: 'POST' })
 }
 
+export interface DeleteRunsResult {
+  removed: number
+  /** Left alone because the run is still going. */
+  skipped: number
+}
+
+/** Delete every run workspace. Saved gallery entries are copies and survive it. */
+export async function deleteAllRuns(): Promise<DeleteRunsResult> {
+  const res = await fetch('/api/runs', { method: 'DELETE' })
+  const body = (await res.json()) as Partial<DeleteRunsResult> & { error?: string }
+  if (!res.ok || typeof body.removed !== 'number' || typeof body.skipped !== 'number') {
+    throw new Error(body.error ?? `Could not delete the runs: ${res.status}`)
+  }
+  return { removed: body.removed, skipped: body.skipped }
+}
+
 export interface SaveToGallery {
   runId: string
   /** Path inside the run workspace, e.g. `exports/final.png`. */

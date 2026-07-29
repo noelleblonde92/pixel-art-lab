@@ -25,6 +25,12 @@ export const config = {
    */
   galleryDir: path.resolve(process.env.GALLERY_DIR ?? path.join(projectRoot, 'gallery')),
 
+  /**
+   * How many run workspaces `pruneOldRuns` keeps, newest first. Every start prunes, and the settings
+   * pane can ask for it by hand; a saved gallery entry is a copy, so it is unaffected either way.
+   */
+  runsKept: 40,
+
   /** Blank "max turns" in the form lands here. One turn is one model round-trip. */
   defaultMaxTurns: 40,
   /** Nothing may exceed this, whatever the form says. */

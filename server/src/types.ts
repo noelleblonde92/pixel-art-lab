@@ -111,10 +111,10 @@ export interface RunStats {
 export interface GalleryEntry {
   id: string
   savedAt: number
-  /** Optional human name. The brief is what groups entries; this only labels one attempt. */
+  /** Optional human name. The prompt is what groups entries; this only labels one attempt. */
   label?: string
   runId: string
-  /** The whole request, so "run this brief on another model" is a one-click prefill. */
+  /** The whole request, so "run this prompt on another model" is a one-click prefill. */
   request: RunRequest
   /** Where the image came from inside the run workspace, for provenance. */
   sourceFile: string
